@@ -4,6 +4,7 @@ import '../services/ai_service.dart';
 import '../services/shizuku_service.dart';
 import '../services/screen_automation_service.dart';
 import '../services/telegram_service.dart';
+import '../services/remote_control_service.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 class SettingsScreen extends StatefulWidget {
@@ -11,6 +12,7 @@ class SettingsScreen extends StatefulWidget {
   final ShizukuService shizukuService;
   final ScreenAutomationService screenAutomationService;
   final TelegramService telegramService;
+  final RemoteControlService remoteControlService;
 
   const SettingsScreen({
     super.key,
@@ -18,6 +20,7 @@ class SettingsScreen extends StatefulWidget {
     required this.shizukuService,
     required this.screenAutomationService,
     required this.telegramService,
+    required this.remoteControlService,
   });
 
   @override
@@ -30,8 +33,11 @@ class _SettingsScreenState extends State<SettingsScreen>
   late TextEditingController _baseUrlController;
   late TextEditingController _modelController;
   late TextEditingController _telegramTokenController;
+  late TextEditingController _bridgeUrlController;
+  late TextEditingController _bridgeTokenController;
   bool _obscureKey = true;
   bool _telegramEnabled = false;
+  bool _bridgeEnabled = false;
   double _maxSteps = 15;
 
   final Map<String, PermissionStatus> _permissions = {};
@@ -47,6 +53,11 @@ class _SettingsScreenState extends State<SettingsScreen>
       text: widget.telegramService.botToken,
     );
     _telegramEnabled = widget.telegramService.isEnabled;
+    _bridgeUrlController =
+        TextEditingController(text: widget.remoteControlService.baseUrl);
+    _bridgeTokenController =
+        TextEditingController(text: widget.remoteControlService.token);
+    _bridgeEnabled = widget.remoteControlService.isEnabled;
     _maxSteps = widget.aiService.maxSteps.toDouble();
     _checkPermissions();
   }
@@ -58,6 +69,8 @@ class _SettingsScreenState extends State<SettingsScreen>
     _baseUrlController.dispose();
     _modelController.dispose();
     _telegramTokenController.dispose();
+    _bridgeUrlController.dispose();
+    _bridgeTokenController.dispose();
     super.dispose();
   }
 
@@ -99,6 +112,12 @@ class _SettingsScreenState extends State<SettingsScreen>
     await widget.telegramService.saveSettings(
       botToken: _telegramTokenController.text.trim(),
       isEnabled: _telegramEnabled,
+    );
+
+    await widget.remoteControlService.saveSettings(
+      baseUrl: _bridgeUrlController.text.trim(),
+      token: _bridgeTokenController.text.trim(),
+      isEnabled: _bridgeEnabled,
     );
 
     await widget.aiService.saveMaxSteps(_maxSteps.toInt());
@@ -283,6 +302,49 @@ class _SettingsScreenState extends State<SettingsScreen>
             },
             contentPadding: EdgeInsets.zero,
           ),
+
+          const Divider(height: 32),
+
+          // Claude Bridge (Remote Control)
+          Text(
+            'Claude Bridge (Remote Control)',
+            style: Theme.of(
+              context,
+            ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            'Connects this device to the agent-bridge control plane so Claude '
+            '(over MCP) and the web dashboard can send tasks and read back results.',
+            style: Theme.of(context).textTheme.bodySmall,
+          ),
+          const SizedBox(height: 12),
+          TextField(
+            controller: _bridgeUrlController,
+            decoration: const InputDecoration(
+              labelText: 'Bridge Base URL',
+              hintText: 'https://agent-bridge.sxtn.online',
+              border: OutlineInputBorder(),
+            ),
+          ),
+          const SizedBox(height: 12),
+          TextField(
+            controller: _bridgeTokenController,
+            decoration: const InputDecoration(
+              labelText: 'Device Token',
+              hintText: 'DEVICE_TOKEN from the bridge',
+              border: OutlineInputBorder(),
+            ),
+            obscureText: true,
+          ),
+          SwitchListTile(
+            title: const Text('Enable Bridge'),
+            subtitle: const Text('Poll the bridge for tasks and post results back'),
+            value: _bridgeEnabled,
+            onChanged: (val) => setState(() => _bridgeEnabled = val),
+            contentPadding: EdgeInsets.zero,
+          ),
+
           const SizedBox(height: 12),
           FilledButton.icon(
             onPressed: _saveApiSettings,

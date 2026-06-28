@@ -5,6 +5,7 @@ import '../services/action_handler.dart';
 import '../services/voice_service.dart';
 import '../widgets/message_bubble.dart';
 import '../services/telegram_service.dart';
+import '../services/remote_control_service.dart';
 import 'settings_screen.dart';
 
 class HomeScreen extends StatefulWidget {
@@ -21,6 +22,7 @@ class _HomeScreenState extends State<HomeScreen> {
   final ActionHandler _actionHandler = ActionHandler();
   final VoiceService _voiceService = VoiceService();
   late final TelegramService _telegramService;
+  late final RemoteControlService _remoteControl;
 
   final List<ChatMessage> _messages = [];
   bool _isLoading = false;
@@ -30,6 +32,7 @@ class _HomeScreenState extends State<HomeScreen> {
   void initState() {
     super.initState();
     _telegramService = TelegramService(_actionHandler, _aiService);
+    _remoteControl = RemoteControlService(_actionHandler, _aiService);
     _initServices();
   }
 
@@ -37,6 +40,7 @@ class _HomeScreenState extends State<HomeScreen> {
     await _aiService.init();
     await _voiceService.init();
     await _telegramService.init();
+    await _remoteControl.init();   // starts polling if previously enabled
 
     // Check Shizuku availability
     await _actionHandler.shizuku.checkAvailability();
@@ -169,6 +173,7 @@ class _HomeScreenState extends State<HomeScreen> {
     _scrollController.dispose();
     _voiceService.dispose();
     _telegramService.dispose();
+    _remoteControl.dispose();
     super.dispose();
   }
 
@@ -253,6 +258,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     shizukuService: _actionHandler.shizuku,
                     screenAutomationService: _actionHandler.screenAutomation,
                     telegramService: _telegramService,
+                    remoteControlService: _remoteControl,
                   ),
                 ),
               );
@@ -283,6 +289,7 @@ class _HomeScreenState extends State<HomeScreen> {
                           shizukuService: _actionHandler.shizuku,
                           screenAutomationService: _actionHandler.screenAutomation,
                           telegramService: _telegramService,
+                          remoteControlService: _remoteControl,
                         ),
                       ),
                     );
