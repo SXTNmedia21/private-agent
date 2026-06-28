@@ -4,6 +4,7 @@ import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'action_handler.dart';
 import 'ai_service.dart';
+import '../models/agent_action.dart';
 
 /// Connects the on-device agent to the agent-bridge control plane.
 ///
@@ -109,41 +110,28 @@ class RemoteControlService {
     _busy = true;
     await _postEvent(type: 'status', message: 'Received: "$text"', instructionId: id);
     try {
-      final aiResponse = await _aiService.sendMessage(text);
-
-      // An empty reply means the on-device model returned nothing — usually a
-      // rate-limit / out-of-credits / network blip. Surface it as an error so
-      // the operator never receives a silent, empty result event.
-      if (aiResponse.trim().isEmpty) {
-        await _postEvent(
-          type: 'error',
-          message:
-              'On-device AI returned an empty response (check API key / credits '
-              'or rate limit on the device).',
-          instructionId: id,
-        );
-        return;
-      }
-
-      final action = _aiService.parseAction(aiResponse);
-
-      if (action != null) {
-        final result = await _actionHandler.execute(
-          action,
-          aiService: _aiService,
-          onProgress: (msg) =>
-              _postEvent(type: 'action', message: msg, instructionId: id),
-        );
-        final details = result.details?.trim();
-        await _postEvent(
-          type: 'result',
-          message: (details == null || details.isEmpty) ? 'Done' : details,
-          instructionId: id,
-        );
-      } else {
-        // Plain conversational reply — still a result for this instruction.
-        await _postEvent(type: 'result', message: aiResponse, instructionId: id);
-      }
+      // Bridge instructions are missions, not chat: always run the multi-step
+      // TaskExecutor (via the execute_task action) so a complex goal like
+      // "open Instagram, search #ai, report the first 5 authors" actually
+      // navigates step by step instead of being answered as a single action
+      // (e.g. one screen read). The model's single-vs-multi-step guess on the
+      // remote path was unreliable; forcing the task loop fixes it.
+      final result = await _actionHandler.execute(
+        AgentAction(
+          action: 'execute_task',
+          params: {'goal': text},
+          response: text,
+        ),
+        aiService: _aiService,
+        onProgress: (msg) =>
+            _postEvent(type: 'action', message: msg, instructionId: id),
+      );
+      final details = result.details?.trim();
+      await _postEvent(
+        type: 'result',
+        message: (details == null || details.isEmpty) ? 'Done' : details,
+        instructionId: id,
+      );
     } catch (e) {
       await _postEvent(type: 'error', message: e.toString(), instructionId: id);
     } finally {
