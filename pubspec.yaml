@@ -13,6 +13,10 @@ dependencies:
   # HTTP & API
   http: ^1.4.0
 
+  # In-app self-update (download + install APK from GitHub Releases)
+  ota_update: ^6.0.0
+  package_info_plus: ^8.0.0
+
   # Voice
   speech_to_text: ^7.0.0
   flutter_tts: ^4.2.0

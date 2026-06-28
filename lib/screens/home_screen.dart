@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:ota_update/ota_update.dart';
 import '../models/chat_message.dart';
 import '../services/ai_service.dart';
 import '../services/action_handler.dart';
@@ -6,6 +7,7 @@ import '../services/voice_service.dart';
 import '../widgets/message_bubble.dart';
 import '../services/telegram_service.dart';
 import '../services/remote_control_service.dart';
+import '../services/update_service.dart';
 import 'settings_screen.dart';
 
 class HomeScreen extends StatefulWidget {
@@ -23,6 +25,7 @@ class _HomeScreenState extends State<HomeScreen> {
   final VoiceService _voiceService = VoiceService();
   late final TelegramService _telegramService;
   late final RemoteControlService _remoteControl;
+  final UpdateService _updateService = UpdateService();
 
   final List<ChatMessage> _messages = [];
   bool _isLoading = false;
@@ -41,6 +44,9 @@ class _HomeScreenState extends State<HomeScreen> {
     await _voiceService.init();
     await _telegramService.init();
     await _remoteControl.init();   // starts polling if previously enabled
+
+    // Silently check for an app update in the background.
+    _maybePromptUpdate();
 
     // Check Shizuku availability
     await _actionHandler.shizuku.checkAvailability();
@@ -64,6 +70,71 @@ class _HomeScreenState extends State<HomeScreen> {
               'Type or tap the mic to get started!',
         ));
       });
+    }
+  }
+
+  /// Background update check; prompts the user if a newer build exists.
+  Future<void> _maybePromptUpdate() async {
+    try {
+      final info = await _updateService.check();
+      if (info == null || !mounted) return;
+      final confirmed = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: Text('Update available — ${info.name}'),
+          content: SingleChildScrollView(
+            child: Text(
+              info.notes.trim().isEmpty
+                  ? 'A newer version of PrivateAgent is available.'
+                  : info.notes.trim(),
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('Later'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('Update now'),
+            ),
+          ],
+        ),
+      );
+      if (confirmed == true) _runInstall(info);
+    } catch (_) {
+      // update check is best-effort — never block the app on it
+    }
+  }
+
+  void _runInstall(UpdateInfo info) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Downloading update…')),
+    );
+    try {
+      _updateService.install(info).listen(
+        (event) {
+          // When the download finishes, ota_update launches the installer.
+          if (!mounted) return;
+          if (event.status == OtaStatus.DOWNLOAD_ERROR ||
+              event.status == OtaStatus.INTERNAL_ERROR ||
+              event.status == OtaStatus.PERMISSION_NOT_GRANTED_ERROR) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(content: Text('Update failed: ${event.status.name}')),
+            );
+          }
+        },
+        onError: (e) {
+          if (!mounted) return;
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Update failed: $e')),
+          );
+        },
+      );
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Update failed: $e')),
+      );
     }
   }
 

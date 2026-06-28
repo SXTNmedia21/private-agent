@@ -5,6 +5,9 @@ on:
     branches: [main]
   workflow_dispatch:
 
+permissions:
+  contents: write   # needed to publish the APK as a Release for in-app update
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -31,7 +34,9 @@ jobs:
         run: flutter analyze
 
       - name: build release APK (debug-signed; installable for sideload)
-        run: flutter build apk --release
+        # versionCode = CI run number, so the app can compare against the
+        # build-<N> release tag to detect a newer build.
+        run: flutter build apk --release --build-number=${{ github.run_number }}
 
       - name: upload APK artifact
         uses: actions/upload-artifact@v4
@@ -39,3 +44,15 @@ jobs:
           name: private-agent-apk
           path: build/app/outputs/flutter-apk/app-release.apk
           if-no-files-found: error
+
+      - name: publish Release for in-app update
+        if: github.ref == 'refs/heads/main'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: build-${{ github.run_number }}
+          name: build-${{ github.run_number }}
+          body: |
+            Automated build ${{ github.run_number }} from ${{ github.sha }}.
+            Installs in-app via Settings → Check for updates.
+          files: build/app/outputs/flutter-apk/app-release.apk
+          make_latest: true

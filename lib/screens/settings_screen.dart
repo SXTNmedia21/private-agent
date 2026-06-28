@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
+import 'package:ota_update/ota_update.dart';
 import 'package:permission_handler/permission_handler.dart';
 import '../services/ai_service.dart';
+import '../services/update_service.dart';
 import '../services/shizuku_service.dart';
 import '../services/screen_automation_service.dart';
 import '../services/telegram_service.dart';
@@ -39,6 +41,9 @@ class _SettingsScreenState extends State<SettingsScreen>
   bool _telegramEnabled = false;
   bool _bridgeEnabled = false;
   double _maxSteps = 15;
+
+  final UpdateService _updateService = UpdateService();
+  bool _checkingUpdate = false;
 
   final Map<String, PermissionStatus> _permissions = {};
 
@@ -195,6 +200,73 @@ class _SettingsScreenState extends State<SettingsScreen>
     }
   }
 
+  /// Manual update check from the Settings button.
+  Future<void> _checkForUpdate() async {
+    setState(() => _checkingUpdate = true);
+    try {
+      final current = await _updateService.currentBuild();
+      final info = await _updateService.check();
+      if (!mounted) return;
+      if (info == null) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Up to date (build $current).')),
+        );
+        return;
+      }
+      final go = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: Text('Update available — ${info.name}'),
+          content: SingleChildScrollView(
+            child: Text(
+              info.notes.trim().isEmpty
+                  ? 'A newer version is available (build ${info.build}).'
+                  : info.notes.trim(),
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('Later'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('Update now'),
+            ),
+          ],
+        ),
+      );
+      if (go == true && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Downloading update…')),
+        );
+        _updateService.install(info).listen((event) {
+          if (!mounted) return;
+          if (event.status == OtaStatus.DOWNLOAD_ERROR ||
+              event.status == OtaStatus.INTERNAL_ERROR ||
+              event.status == OtaStatus.PERMISSION_NOT_GRANTED_ERROR) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(content: Text('Update failed: ${event.status.name}')),
+            );
+          }
+        }, onError: (e) {
+          if (!mounted) return;
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Update failed: $e')),
+          );
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Update check failed: $e')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _checkingUpdate = false);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -273,7 +345,29 @@ class _SettingsScreenState extends State<SettingsScreen>
               });
             },
           ),
-          
+
+          const SizedBox(height: 16),
+          const Divider(height: 32),
+          Text(
+            'App Updates',
+            style: Theme.of(context)
+                .textTheme
+                .titleMedium
+                ?.copyWith(fontWeight: FontWeight.bold),
+          ),
+          const SizedBox(height: 8),
+          OutlinedButton.icon(
+            onPressed: _checkingUpdate ? null : _checkForUpdate,
+            icon: _checkingUpdate
+                ? const SizedBox(
+                    width: 16,
+                    height: 16,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Icon(Icons.system_update),
+            label: Text(_checkingUpdate ? 'Checking…' : 'Check for updates'),
+          ),
+
           const SizedBox(height: 12),
           const Divider(height: 32),
 
