@@ -46,6 +46,7 @@ Available actions:
 - press_back: {} - Press the back button
 - press_home: {} - Press the home button
 - open_app: {"app_name": "WhatsApp"} - Open an app
+- open_url: {"url": "https://..."} - Open a URL or deep link directly (e.g. an Instagram hashtag page or profile). PREFER this over searching when you know the destination URL — it skips fragile in-app search.
 - wait: {} - Wait a moment for content to load
 - done: {} - Task is complete
 
@@ -188,6 +189,12 @@ Step ${step + 1}/${_aiService.maxSteps}. Look at the text dump and coordinates. 
         case 'open_app':
           final appName = params['app_name'] as String? ?? '';
           actionResult = await _appLauncher.openApp(appName);
+          success = actionResult.startsWith('Opened');
+          break;
+
+        case 'open_url':
+          final url = params['url'] as String? ?? '';
+          actionResult = await _appLauncher.openUrl(url);
           success = actionResult.startsWith('Opened');
           break;
 
