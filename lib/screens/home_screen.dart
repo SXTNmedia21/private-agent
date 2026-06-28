@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:ota_update/ota_update.dart';
 import '../models/chat_message.dart';
 import '../services/ai_service.dart';
 import '../services/action_handler.dart';
@@ -107,31 +106,14 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
-  void _runInstall(UpdateInfo info) {
+  Future<void> _runInstall(UpdateInfo info) async {
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(content: Text('Downloading update…')),
     );
     try {
-      _updateService.install(info).listen(
-        (event) {
-          // When the download finishes, ota_update launches the installer.
-          if (!mounted) return;
-          if (event.status == OtaStatus.DOWNLOAD_ERROR ||
-              event.status == OtaStatus.INTERNAL_ERROR ||
-              event.status == OtaStatus.PERMISSION_NOT_GRANTED_ERROR) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(content: Text('Update failed: ${event.status.name}')),
-            );
-          }
-        },
-        onError: (e) {
-          if (!mounted) return;
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('Update failed: $e')),
-          );
-        },
-      );
+      await _updateService.downloadAndInstall(info);
     } catch (e) {
+      if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Update failed: $e')),
       );

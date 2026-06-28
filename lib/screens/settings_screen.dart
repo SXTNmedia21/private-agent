@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:ota_update/ota_update.dart';
 import 'package:permission_handler/permission_handler.dart';
 import '../services/ai_service.dart';
 import '../services/update_service.dart';
@@ -240,21 +239,15 @@ class _SettingsScreenState extends State<SettingsScreen>
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Downloading update…')),
         );
-        _updateService.install(info).listen((event) {
-          if (!mounted) return;
-          if (event.status == OtaStatus.DOWNLOAD_ERROR ||
-              event.status == OtaStatus.INTERNAL_ERROR ||
-              event.status == OtaStatus.PERMISSION_NOT_GRANTED_ERROR) {
+        try {
+          await _updateService.downloadAndInstall(info);
+        } catch (e) {
+          if (mounted) {
             ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(content: Text('Update failed: ${event.status.name}')),
+              SnackBar(content: Text('Update failed: $e')),
             );
           }
-        }, onError: (e) {
-          if (!mounted) return;
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('Update failed: $e')),
-          );
-        });
+        }
       }
     } catch (e) {
       if (mounted) {

@@ -7,7 +7,9 @@ plugins {
 
 android {
     namespace = "com.orailnoor.privateagent"
-    compileSdk = flutter.compileSdkVersion
+    // Pinned to 35 (not flutter.compileSdkVersion) so transitive androidx
+    // resources like android:attr/lStar resolve — required by ota_update.
+    compileSdk = 35
     ndkVersion = flutter.ndkVersion
 
     compileOptions {

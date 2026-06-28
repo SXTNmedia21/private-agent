@@ -1,7 +1,9 @@
 import 'dart:convert';
+import 'dart:io';
 import 'package:http/http.dart' as http;
-import 'package:ota_update/ota_update.dart';
+import 'package:open_filex/open_filex.dart';
 import 'package:package_info_plus/package_info_plus.dart';
+import 'package:path_provider/path_provider.dart';
 
 /// Info about an available update.
 class UpdateInfo {
@@ -24,8 +26,8 @@ class UpdateInfo {
 /// where N is the (monotonic) CI run number and is also baked into the APK's
 /// versionCode via `--build-number`. On check we compare this device's
 /// versionCode (PackageInfo.buildNumber) against the latest release's `build-N`
-/// tag; if the release is newer we hand its public APK URL to `ota_update`,
-/// which downloads it and launches the system installer.
+/// tag; if the release is newer we download its public APK and hand it to the
+/// system package installer (via open_filex).
 ///
 /// The repo is PUBLIC, so the APK URL needs no auth — nothing secret ships in
 /// the app.
@@ -75,12 +77,41 @@ class UpdateService {
     );
   }
 
-  /// Download and install the update. Emits ota_update progress events; the
-  /// system installer is launched automatically once the download completes.
-  Stream<OtaEvent> install(UpdateInfo info) {
-    return OtaUpdate().execute(
-      info.apkUrl,
-      destinationFilename: 'private-agent-update.apk',
+  /// Download the update APK (reporting 0..1 progress) and launch the system
+  /// installer. Throws on download failure; returns the installer's result
+  /// message. The user still confirms the install in the Android dialog.
+  Future<String> downloadAndInstall(
+    UpdateInfo info, {
+    void Function(double progress)? onProgress,
+  }) async {
+    final dir =
+        await getExternalStorageDirectory() ?? await getTemporaryDirectory();
+    final file = File('${dir.path}/private-agent-update.apk');
+
+    final client = http.Client();
+    try {
+      final resp = await client.send(http.Request('GET', Uri.parse(info.apkUrl)));
+      if (resp.statusCode != 200) {
+        throw HttpException('Download failed (HTTP ${resp.statusCode})');
+      }
+      final total = resp.contentLength ?? 0;
+      final sink = file.openWrite();
+      var received = 0;
+      await for (final chunk in resp.stream) {
+        sink.add(chunk);
+        received += chunk.length;
+        if (total > 0) onProgress?.call(received / total);
+      }
+      await sink.flush();
+      await sink.close();
+    } finally {
+      client.close();
+    }
+
+    final result = await OpenFilex.open(
+      file.path,
+      type: 'application/vnd.android.package-archive',
     );
+    return result.message;
   }
 }
