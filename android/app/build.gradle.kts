@@ -31,11 +31,24 @@ android {
         versionName = flutter.versionName
     }
 
+    signingConfigs {
+        // Fixed keystore committed to the repo so every CI build is signed with
+        // the SAME key. Without this, each runner generated a fresh debug key and
+        // Android refused to install one build over another (and the in-app
+        // updater silently failed). This is a sideload test-app key — its only
+        // job is update continuity, not Play-Store-grade secrecy.
+        create("release") {
+            storeFile = file("release.keystore")
+            storeType = "PKCS12"
+            storePassword = "privateagent"
+            keyAlias = "privateagent"
+            keyPassword = "privateagent"
+        }
+    }
+
     buildTypes {
         release {
-            // TODO: Add your own signing config for the release build.
-            // Signing with the debug keys for now, so `flutter run --release` works.
-            signingConfig = signingConfigs.getByName("debug")
+            signingConfig = signingConfigs.getByName("release")
         }
     }
 }
