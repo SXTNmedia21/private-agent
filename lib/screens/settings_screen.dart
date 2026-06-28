@@ -6,6 +6,7 @@ import '../services/shizuku_service.dart';
 import '../services/screen_automation_service.dart';
 import '../services/telegram_service.dart';
 import '../services/remote_control_service.dart';
+import '../services/autonomous_scout.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 class SettingsScreen extends StatefulWidget {
@@ -14,6 +15,7 @@ class SettingsScreen extends StatefulWidget {
   final ScreenAutomationService screenAutomationService;
   final TelegramService telegramService;
   final RemoteControlService remoteControlService;
+  final AutonomousScout scout;
 
   const SettingsScreen({
     super.key,
@@ -22,6 +24,7 @@ class SettingsScreen extends StatefulWidget {
     required this.screenAutomationService,
     required this.telegramService,
     required this.remoteControlService,
+    required this.scout,
   });
 
   @override
@@ -40,6 +43,11 @@ class _SettingsScreenState extends State<SettingsScreen>
   bool _telegramEnabled = false;
   bool _bridgeEnabled = false;
   double _maxSteps = 15;
+
+  // Autonomous scout
+  bool _scoutEnabled = false;
+  String _scoutMode = 'draft';
+  double _scoutInterval = 8;
 
   final UpdateService _updateService = UpdateService();
   bool _checkingUpdate = false;
@@ -63,6 +71,9 @@ class _SettingsScreenState extends State<SettingsScreen>
         TextEditingController(text: widget.remoteControlService.token);
     _bridgeEnabled = widget.remoteControlService.isEnabled;
     _maxSteps = widget.aiService.maxSteps.toDouble();
+    _scoutEnabled = widget.scout.isEnabled;
+    _scoutMode = widget.scout.mode;
+    _scoutInterval = widget.scout.intervalMin.toDouble();
     _checkPermissions();
   }
 
@@ -125,6 +136,14 @@ class _SettingsScreenState extends State<SettingsScreen>
     );
 
     await widget.aiService.saveMaxSteps(_maxSteps.toInt());
+
+    // Scout reads bridge_base_url/bridge_token from prefs, which the
+    // remoteControlService.saveSettings above just persisted.
+    await widget.scout.saveSettings(
+      enabled: _scoutEnabled,
+      mode: _scoutMode,
+      intervalMin: _scoutInterval.toInt(),
+    );
 
     if (mounted) {
       ScaffoldMessenger.of(
@@ -340,6 +359,58 @@ class _SettingsScreenState extends State<SettingsScreen>
           ),
 
           const SizedBox(height: 16),
+          const Divider(height: 32),
+          Text(
+            'Autonomous Scout (Sixten works on his own)',
+            style: Theme.of(context)
+                .textTheme
+                .titleMedium
+                ?.copyWith(fontWeight: FontWeight.bold),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            'When on, Sixten finds posts on rotating hashtags and composes comments '
+            'in his own voice — on a paced timer, while the app is open. '
+            'Draft mode reports the comment without posting; Live mode posts it. '
+            'Everything shows in the activity dashboard.',
+            style: Theme.of(context).textTheme.bodySmall,
+          ),
+          SwitchListTile(
+            title: const Text('Enable Autonomous Scout'),
+            subtitle: Text('Requires the Claude Bridge above to be configured.'),
+            value: _scoutEnabled,
+            onChanged: (v) => setState(() => _scoutEnabled = v),
+            contentPadding: EdgeInsets.zero,
+          ),
+          Row(
+            children: [
+              const Text('Mode:'),
+              const SizedBox(width: 12),
+              ChoiceChip(
+                label: const Text('Draft'),
+                selected: _scoutMode == 'draft',
+                onSelected: (_) => setState(() => _scoutMode = 'draft'),
+              ),
+              const SizedBox(width: 8),
+              ChoiceChip(
+                label: const Text('Live (posts)'),
+                selected: _scoutMode == 'live',
+                onSelected: (_) => setState(() => _scoutMode = 'live'),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Text('Interval: every ${_scoutInterval.toInt()} min'),
+          Slider(
+            value: _scoutInterval,
+            min: 3,
+            max: 60,
+            divisions: 57,
+            label: '${_scoutInterval.toInt()} min',
+            onChanged: (v) => setState(() => _scoutInterval = v),
+          ),
+
+          const SizedBox(height: 8),
           const Divider(height: 32),
           Text(
             'App Updates',

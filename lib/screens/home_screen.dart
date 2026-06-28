@@ -6,6 +6,7 @@ import '../services/voice_service.dart';
 import '../widgets/message_bubble.dart';
 import '../services/telegram_service.dart';
 import '../services/remote_control_service.dart';
+import '../services/autonomous_scout.dart';
 import '../services/update_service.dart';
 import 'settings_screen.dart';
 
@@ -24,6 +25,7 @@ class _HomeScreenState extends State<HomeScreen> {
   final VoiceService _voiceService = VoiceService();
   late final TelegramService _telegramService;
   late final RemoteControlService _remoteControl;
+  late final AutonomousScout _scout;
   final UpdateService _updateService = UpdateService();
 
   final List<ChatMessage> _messages = [];
@@ -35,6 +37,7 @@ class _HomeScreenState extends State<HomeScreen> {
     super.initState();
     _telegramService = TelegramService(_actionHandler, _aiService);
     _remoteControl = RemoteControlService(_actionHandler, _aiService);
+    _scout = AutonomousScout(_actionHandler, _aiService);
     _initServices();
   }
 
@@ -43,6 +46,7 @@ class _HomeScreenState extends State<HomeScreen> {
     await _voiceService.init();
     await _telegramService.init();
     await _remoteControl.init();   // starts polling if previously enabled
+    await _scout.init();           // starts the autonomous scout loop if enabled
 
     // Silently check for an app update in the background.
     _maybePromptUpdate();
@@ -227,6 +231,7 @@ class _HomeScreenState extends State<HomeScreen> {
     _voiceService.dispose();
     _telegramService.dispose();
     _remoteControl.dispose();
+    _scout.dispose();
     super.dispose();
   }
 
@@ -312,6 +317,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     screenAutomationService: _actionHandler.screenAutomation,
                     telegramService: _telegramService,
                     remoteControlService: _remoteControl,
+                    scout: _scout,
                   ),
                 ),
               );
