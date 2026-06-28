@@ -349,6 +349,7 @@ class _HomeScreenState extends State<HomeScreen> {
                           screenAutomationService: _actionHandler.screenAutomation,
                           telegramService: _telegramService,
                           remoteControlService: _remoteControl,
+                          scout: _scout,
                         ),
                       ),
                     );
