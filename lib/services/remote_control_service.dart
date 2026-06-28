@@ -110,6 +110,21 @@ class RemoteControlService {
     await _postEvent(type: 'status', message: 'Received: "$text"', instructionId: id);
     try {
       final aiResponse = await _aiService.sendMessage(text);
+
+      // An empty reply means the on-device model returned nothing — usually a
+      // rate-limit / out-of-credits / network blip. Surface it as an error so
+      // the operator never receives a silent, empty result event.
+      if (aiResponse.trim().isEmpty) {
+        await _postEvent(
+          type: 'error',
+          message:
+              'On-device AI returned an empty response (check API key / credits '
+              'or rate limit on the device).',
+          instructionId: id,
+        );
+        return;
+      }
+
       final action = _aiService.parseAction(aiResponse);
 
       if (action != null) {
@@ -119,9 +134,10 @@ class RemoteControlService {
           onProgress: (msg) =>
               _postEvent(type: 'action', message: msg, instructionId: id),
         );
+        final details = result.details?.trim();
         await _postEvent(
           type: 'result',
-          message: result.details ?? 'Done',
+          message: (details == null || details.isEmpty) ? 'Done' : details,
           instructionId: id,
         );
       } else {

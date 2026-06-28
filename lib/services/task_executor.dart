@@ -52,8 +52,11 @@ Available actions:
 Rules:
 - You will receive a TEXT DUMP of the accessibility tree containing exact text strings and center coordinates.
 - ALWAYS use the text dump to decide your next action.
+- TO OPEN ANY APP (Settings, Play Store, YouTube, Chrome, Instagram, etc.) ALWAYS use `open_app` with the common ENGLISH name. It launches the app directly by package — it works even when the phone's language is not English and even for system apps. NEVER try to find an app by pressing home and hunting the home screen or app drawer: there is no reliable app-drawer button to tap, and that approach wastes steps.
+- If `open_app` returns "Could not find app", try ONE alternative common name, then fall back to `click_text` on a visible app label. Do NOT repeatedly scroll/tap looking for an app drawer.
 - If you need to click something, prefer using `click_text`. If the element does not have text, use `click_at` with the coordinates provided in the text dump.
 - When typing in a search box, you MUST click it first, wait a step, and THEN type.
+- `wait` is for short content loads only. Do NOT spend several steps waiting on a long download/install — once it has clearly started, set is_complete=true and report that it is installing.
 - Set is_complete=true ONLY when the task is fully done.
 - If you need to find something by scrolling, scroll and then check the screen again.
 - If stuck after 3 attempts, set is_complete=true and explain in reasoning.
@@ -128,7 +131,13 @@ Step ${step + 1}/${_aiService.maxSteps}. Look at the text dump and coordinates. 
         break;
       }
 
-      final action = actionJson['action'] as String? ?? 'done';
+      var action = actionJson['action'] as String? ?? 'done';
+      // Some models emit synonyms for finishing — treat them all as `done`
+      // instead of wasting a step as "Unknown action".
+      if (const {'final_answer', 'finish', 'complete', 'completed', 'stop', 'end'}
+          .contains(action.toLowerCase())) {
+        action = 'done';
+      }
       final params = actionJson['params'] as Map<String, dynamic>? ?? {};
       final reasoning = actionJson['reasoning'] as String? ?? '';
       final isComplete = actionJson['is_complete'] == true;

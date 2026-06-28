@@ -10,7 +10,7 @@ class AiService {
   String? _apiKey;
   String _baseUrl = _defaultBaseUrl;
   String _model = _defaultModel;
-  int _maxSteps = 15;
+  int _maxSteps = 25;
   final List<Map<String, String>> _conversationHistory = [];
 
   static const String _systemPrompt = '''
@@ -58,7 +58,7 @@ For normal conversation (questions, chat, info requests), just respond with plai
     _apiKey = prefs.getString('api_key');
     _baseUrl = prefs.getString('api_base_url') ?? _defaultBaseUrl;
     _model = prefs.getString('api_model') ?? _defaultModel;
-    _maxSteps = prefs.getInt('api_max_steps') ?? 15;
+    _maxSteps = prefs.getInt('api_max_steps') ?? 25;
   }
 
   Future<void> saveSettings({
