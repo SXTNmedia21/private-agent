@@ -49,6 +49,9 @@ void main() {
       'screenshot': Uint8List.fromList(List<int>.filled(2048, 7)),
       'notificationReply': <Object?, Object?>{'ok': true},
       'clipboard': <Object?, Object?>{'text': null, 'restricted': true},
+      'screenRecordStart': <Object?, Object?>{'recording': true, 'max_s': 60, 'scale': 0.5},
+      'screenRecordStatus': <Object?, Object?>{'recording': false, 'has_consent': false},
+      'screenRecordStop': Uint8List.fromList(<int>[0, 0, 0, 24, 102, 116, 121, 112, 1, 2, 3]),
     };
     mockNative();
   });
@@ -92,13 +95,53 @@ void main() {
       expect(calls, isEmpty);
     });
 
-    test('the recording trio is honestly deferred to P6, not faked', () async {
-      for (final m in RpcHandlers.deferredToP6) {
+    test('the recording trio is implemented now, and reaches native', () async {
+      // Build-12 deferred these and said so. Build-13 must actually DISPATCH them: a
+      // recording tool that answers ok without ever calling the platform channel would be
+      // the same lie the deferral was written to avoid, wearing a success code.
+      for (final m in const ['device_record_start', 'device_record_stop', 'device_record_status']) {
+        calls.clear();
         final out = await build().dispatch(req(m));
-        expect(out.response.ok, isFalse);
-        expect(out.response.error, contains('not_implemented_until_p6'));
+        expect(RpcHandlers.implemented, contains(m));
+        expect(out.response.error ?? '', isNot(contains('unimplemented_on_device')));
+        expect(out.response.error ?? '', isNot(contains('not_implemented_until_p6')));
+        expect(calls, isNotEmpty, reason: '$m must reach the native channel');
       }
-      expect(calls, isEmpty);
+    });
+
+    test('a recording refused for want of consent reports THAT, not a generic failure', () async {
+      // The single most confusing failure on this device: nothing is broken, a human simply
+      // has not tapped the dialog. If that came back as a generic error someone would go
+      // looking at the socket, the token and the accessibility service first.
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(channel, (MethodCall call) async {
+        calls.add(call);
+        if (call.method == 'screenRecordStart') {
+          throw PlatformException(
+            code: 'RECORD_CONSENT_REQUIRED',
+            message: 'Screen recording needs a one-time consent tap on the handset.',
+          );
+        }
+        return replies[call.method];
+      });
+      final out = await build().dispatch(req('device_record_start'));
+      expect(out.response.ok, isFalse);
+      expect(out.response.error, contains('RECORD_CONSENT_REQUIRED'));
+      expect(out.response.error, contains('one-time consent tap'));
+    });
+
+    test('a stopped recording comes back as an MP4 BINARY FRAME, never inside the JSON', () async {
+      final out = await build().dispatch(req('device_record_stop'));
+      expect(out.response.ok, isTrue);
+      expect(out.binary, isNotNull);
+      expect(out.binary!.length, (replies['screenRecordStop']! as Uint8List).length);
+      expect(out.response.binaryMime, 'video/mp4');
+      final data = out.response.data! as Map<String, dynamic>;
+      expect(data['bytes'], out.binary!.length);
+      // ADR-4 D3. A recording is far too large to ride in JSON, and the screenshot path
+      // learned this the hard way when Uint8List was rebuilt as List<Object?>.
+      expect(data.containsKey('base64'), isFalse);
+      expect(data.containsKey('bytes_b64'), isFalse);
     });
 
     test('every advertised device_* method has a branch', () async {

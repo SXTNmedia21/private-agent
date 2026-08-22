@@ -41,6 +41,9 @@ class DeviceChannel(private val activity: Activity) : MethodChannel.MethodCallHa
 
         /** Give the UI a beat to react before we fingerprint, so "did it change?" is meaningful. */
         private const val SETTLE_MS = 250L
+
+        /** startActivityForResult code for the MediaProjection consent dialog. */
+        const val RECORD_CONSENT_REQUEST = 4301
     }
 
     private val appContext: Context = activity.applicationContext
@@ -472,9 +475,54 @@ class DeviceChannel(private val activity: Activity) : MethodChannel.MethodCallHa
                 )
             )
 
-            // ── P6, not this phase ──────────────────────────────
-            "startScreenRecording", "stopScreenRecording", "screenRecord" ->
-                result.error("NOT_IMPLEMENTED", "Screen recording arrives in P6", null)
+            // ── Recording (P6) ──────────────────────────────────
+            //
+            // Recording is the ONE primitive that is not fully remote: MediaProjection needs a
+            // human to tap a system dialog, and that dialog can only be raised from a foreground
+            // Activity. So `screenRecordStart` refuses with a specific code when no consent has
+            // been captured this process, rather than hanging or returning an empty file.
+            "screenRecordStart" -> reply(result) {
+                val maxS = (intArg(call, "max_s") ?: 60).coerceIn(1, 600)
+                val scale = (dblArg(call, "scale") ?: 0.5).coerceIn(0.1, 1.0)
+                if (!ScreenRecorder.hasConsent()) {
+                    // Best effort: bring the consent dialog up so the next attempt can succeed.
+                    // It only appears if a human is looking at the phone, which is the point.
+                    requestRecordingConsent()
+                    throw ChannelError(
+                        ScreenRecorder.ERR_NO_CONSENT,
+                        "Screen recording needs a one-time consent tap on the handset. The " +
+                            "system dialog has been raised; approve it and call again. Consent " +
+                            "lasts until the app process restarts.",
+                    )
+                }
+                val path = try {
+                    ScreenRecorder.start(appContext, maxS, scale, System.currentTimeMillis())
+                } catch (e: IllegalStateException) {
+                    throw ChannelError(codeOf(e), e.message ?: "recording failed to start")
+                }
+                mapOf("recording" to true, "max_s" to maxS, "scale" to scale, "path" to path)
+            }
+
+            "screenRecordStop" -> reply(result) {
+                val file = try {
+                    ScreenRecorder.stop()
+                } catch (e: IllegalStateException) {
+                    throw ChannelError(codeOf(e), e.message ?: "recording failed to stop")
+                }
+                val bytes = file.readBytes()
+                // The file stays on disk as well: the bridge writes its own copy under the run's
+                // evidence directory, and having both means a failed transfer is recoverable.
+                bytes
+            }
+
+            "screenRecordStatus" -> reply(result) {
+                ScreenRecorder.status(System.currentTimeMillis())
+            }
+
+            "requestRecordingConsent" -> reply(result) {
+                requestRecordingConsent()
+                mapOf("raised" to true, "has_consent" to ScreenRecorder.hasConsent())
+            }
 
             else -> result.notImplemented()
         }
@@ -498,6 +546,28 @@ class DeviceChannel(private val activity: Activity) : MethodChannel.MethodCallHa
             n?.recycle()
         } catch (_: Throwable) {
         }
+    }
+
+    /**
+     * Raise the MediaProjection consent dialog. Uses NEW_TASK so it works even when the app is
+     * not the foreground activity — on a handset nobody is holding, it simply queues behind the
+     * lock screen until someone looks, which is honest: consent that could be granted without a
+     * person present would not be consent.
+     */
+    private fun requestRecordingConsent() {
+        try {
+            val intent = ScreenRecorder.consentIntent(activity)
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            activity.startActivityForResult(intent, RECORD_CONSENT_REQUEST)
+        } catch (_: Throwable) {
+            // Nothing to salvage: the caller already gets RECORD_CONSENT_REQUIRED.
+        }
+    }
+
+    /** ScreenRecorder throws IllegalStateException whose message STARTS with a stable code. */
+    private fun codeOf(e: IllegalStateException): String {
+        val m = e.message ?: return ScreenRecorder.ERR_FAILED
+        return m.substringBefore(":").trim().ifEmpty { ScreenRecorder.ERR_FAILED }
     }
 
     private fun requireApi30(what: String) {

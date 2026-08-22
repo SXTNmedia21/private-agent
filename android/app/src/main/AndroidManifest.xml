@@ -14,6 +14,10 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <!-- Required from targetSdk 34; harmless on API 26..33 -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <!-- P6 recording. From Android 10 a MediaProjection capture requires a foreground service
+         declaring the mediaProjection type; without it createVirtualDisplay throws a security
+         exception that reads like a consent problem and sends you looking in the wrong place. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
     <!-- The only sanctioned way to implement closeApp; normal permission, no runtime prompt.
@@ -83,7 +87,7 @@
         <service
             android:name=".AgentForegroundService"
             android:exported="false"
-            android:foregroundServiceType="dataSync" />
+            android:foregroundServiceType="dataSync|mediaProjection" />
 
         <receiver
             android:name=".BootReceiver"

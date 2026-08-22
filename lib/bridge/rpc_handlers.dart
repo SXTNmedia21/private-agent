@@ -49,9 +49,9 @@ class RpcHandlers {
   final GateEventSink? _onGateRefusal;
   final int Function() _now;
 
-  /// The methods this build can execute. The bridge advertises 33 `device_*`
-  /// tools; the three recording ones land in P6 and are honestly reported as
-  /// unimplemented rather than silently succeeding.
+  /// The methods this build can execute — all 33 `device_*` tools the bridge
+  /// advertises, complete as of build-13. Anything absent from this set is
+  /// reported as unimplemented rather than silently succeeding.
   static const Set<String> implemented = <String>{
     'device_status', 'device_get_screen_state', 'device_find', 'device_node_details',
     'device_screenshot', 'device_pixel',
@@ -64,9 +64,6 @@ class RpcHandlers {
     'device_clipboard', 'device_logs',
     'device_list_files', 'device_read_file', 'device_write_file',
     'device_download_from_url', 'device_share_file',
-  };
-
-  static const Set<String> deferredToP6 = <String>{
     'device_record_start', 'device_record_stop', 'device_record_status',
   };
 
@@ -95,14 +92,6 @@ class RpcHandlers {
           tookMs: elapsed(),
         ));
       }
-    }
-
-    if (deferredToP6.contains(req.method)) {
-      return HandlerOutcome(RpcResponse.failure(
-        req.id,
-        'not_implemented_until_p6: ${req.method}',
-        elapsed(),
-      ));
     }
 
     try {
@@ -323,6 +312,50 @@ class RpcHandlers {
           if (p['package'] != null) 'package': p['package'],
           'data': (await _resolveScoped((p['path'] ?? '').toString()))?.path ?? '',
         }));
+
+      // ---- recording (P6) ----------------------------------------------
+      //
+      // The one primitive that is not fully remote. MediaProjection needs a human to tap a
+      // system dialog and it cannot be granted any other way, so a missing consent is
+      // surfaced as its own error rather than dressed up as a transient failure.
+      case 'device_record_start':
+        final rec = await _c.recordStart(
+          maxS: _int(p['max_s']),
+          scale: _double(p['scale']),
+        );
+        if (!rec.ok) {
+          return HandlerOutcome(
+            RpcResponse.failure(req.id, '${rec.error}: ${rec.message}', elapsed()),
+          );
+        }
+        return done(rec);
+
+      case 'device_record_status':
+        return done(await _c.recordStatus());
+
+      case 'device_record_stop':
+        final out = await _c.recordStop();
+        if (!out.ok) {
+          return HandlerOutcome(
+            RpcResponse.failure(req.id, '${out.error}: ${out.message}', elapsed()),
+          );
+        }
+        final mp4 = out.value!;
+        return HandlerOutcome(
+          RpcResponse(
+            id: req.id,
+            ok: true,
+            data: <String, dynamic>{
+              'mime': 'video/mp4',
+              'bytes': mp4.length,
+            },
+            tookMs: elapsed(),
+            binaryMime: 'video/mp4',
+            binaryName: 'recording.mp4',
+            binaryLength: mp4.length,
+          ),
+          binary: mp4,
+        );
 
       default:
         return HandlerOutcome(

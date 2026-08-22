@@ -206,6 +206,24 @@ class DeviceChannel {
   Future<NativeResult<bool>> requestBatteryUnrestricted() =>
       _invoke<bool>('requestBatteryUnrestricted');
 
+  // ---- recording (P6) ------------------------------------------------
+
+  /// Begin recording. Fails with `RECORD_CONSENT_REQUIRED` when nobody has tapped the
+  /// MediaProjection dialog in this app process — that is a real state, not a bug, and it
+  /// is reported rather than retried, because no amount of retrying produces a human.
+  Future<NativeResult<Map<String, dynamic>>> recordStart({int? maxS, double? scale}) =>
+      _invoke<Map<String, dynamic>>('screenRecordStart', <String, dynamic>{
+        'max_s': ?maxS,
+        'scale': ?scale,
+      });
+
+  /// Stop and return the MP4 bytes. Native refuses rather than returning a zero-byte file
+  /// when the recording captured no frames.
+  Future<NativeResult<Uint8List>> recordStop() => _invoke<Uint8List>('screenRecordStop');
+
+  Future<NativeResult<Map<String, dynamic>>> recordStatus() =>
+      _invoke<Map<String, dynamic>>('screenRecordStatus');
+
   // ---- accessibility onboarding (legacy channel, still the only opener) ----
 
   static const MethodChannel _a11y = MethodChannel('com.privateagent/accessibility');

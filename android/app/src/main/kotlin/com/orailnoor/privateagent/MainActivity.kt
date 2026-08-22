@@ -9,6 +9,21 @@ import io.flutter.plugin.common.MethodChannel
 class MainActivity : FlutterActivity() {
     private val CHANNEL = "com.privateagent/accessibility"
 
+    /**
+     * The MediaProjection consent result (P6).
+     *
+     * This is the only place the token can be caught — the system delivers it to the Activity
+     * that asked, and nothing else in the process sees it. Caching it here is what makes "one
+     * tap per app process life" true; without this override the dialog would appear, a human
+     * would tap Allow, and the answer would be dropped on the floor.
+     */
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode == DeviceChannel.RECORD_CONSENT_REQUEST) {
+            ScreenRecorder.rememberConsent(resultCode, data)
+        }
+    }
+
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
 
