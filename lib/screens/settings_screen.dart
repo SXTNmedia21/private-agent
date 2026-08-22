@@ -51,6 +51,7 @@ class _SettingsScreenState extends State<SettingsScreen>
 
   final UpdateService _updateService = UpdateService();
   bool _checkingUpdate = false;
+  InstalledVersion? _installed;
 
   final Map<String, PermissionStatus> _permissions = {};
 
@@ -73,6 +74,9 @@ class _SettingsScreenState extends State<SettingsScreen>
     _maxSteps = widget.aiService.maxSteps.toDouble();
     _scoutEnabled = widget.scout.isEnabled;
     _scoutMode = widget.scout.mode;
+    _updateService.currentVersion().then((v) {
+      if (mounted) setState(() => _installed = v);
+    });
     _scoutInterval = widget.scout.intervalMin.toDouble();
     _checkPermissions();
   }
@@ -234,7 +238,7 @@ class _SettingsScreenState extends State<SettingsScreen>
       final go = await showDialog<bool>(
         context: context,
         builder: (ctx) => AlertDialog(
-          title: Text('Update available — ${info.name}'),
+          title: Text('Update available — ${info.name} (installed: build $current)'),
           content: SingleChildScrollView(
             child: Text(
               info.notes.trim().isEmpty
@@ -260,10 +264,26 @@ class _SettingsScreenState extends State<SettingsScreen>
         );
         try {
           await _updateService.downloadAndInstall(info);
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                duration: Duration(seconds: 12),
+                content: Text(
+                  'Installer opened. If Android says "App not installed", '
+                  'the installed build was signed with a different key — '
+                  'uninstall PrivateAgent once and install the new build '
+                  'fresh (see the note under App Updates).',
+                ),
+              ),
+            );
+          }
         } catch (e) {
           if (mounted) {
             ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(content: Text('Update failed: $e')),
+              SnackBar(
+                duration: const Duration(seconds: 10),
+                content: Text('Update failed: $e'),
+              ),
             );
           }
         }
@@ -419,6 +439,30 @@ class _SettingsScreenState extends State<SettingsScreen>
                 .titleMedium
                 ?.copyWith(fontWeight: FontWeight.bold),
           ),
+          const SizedBox(height: 4),
+          Text(
+            _installed == null
+                ? 'Installed: …'
+                : 'Installed: v${_installed!.versionName} · build ${_installed!.build}',
+            style: Theme.of(context).textTheme.bodySmall,
+          ),
+          if (_installed?.needsReinstall == true) ...[
+            const SizedBox(height: 8),
+            Card(
+              color: Theme.of(context).colorScheme.errorContainer,
+              child: Padding(
+                padding: const EdgeInsets.all(12),
+                child: Text(
+                  'This build (${_installed!.build}) is signed with a temporary '
+                  'key. In-app update will fail with "App not installed". '
+                  '${UpdateService.reinstallHint}',
+                  style: TextStyle(
+                    color: Theme.of(context).colorScheme.onErrorContainer,
+                  ),
+                ),
+              ),
+            ),
+          ],
           const SizedBox(height: 8),
           OutlinedButton.icon(
             onPressed: _checkingUpdate ? null : _checkForUpdate,

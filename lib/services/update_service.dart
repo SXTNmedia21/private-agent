@@ -31,14 +31,49 @@ class UpdateInfo {
 ///
 /// The repo is PUBLIC, so the APK URL needs no auth — nothing secret ships in
 /// the app.
+/// What is installed right now, as shown in Settings → App Updates.
+class InstalledVersion {
+  final String versionName; // e.g. 0.1.0
+  final int build; // versionCode = CI build number (0 if unknown)
+
+  const InstalledVersion({required this.versionName, required this.build});
+
+  /// Builds before [UpdateService.firstFixedKeyBuild] were signed with a
+  /// throwaway CI debug key. Android refuses to update across signing keys, so
+  /// such an install can never be updated in place — it must be uninstalled
+  /// once and a fixed-key build installed fresh.
+  bool get needsReinstall => build > 0 && build < UpdateService.firstFixedKeyBuild;
+
+  @override
+  String toString() => build > 0 ? '$versionName (build $build)' : versionName;
+}
+
 class UpdateService {
   static const String _repo = 'SXTNmedia21/private-agent';
   static final RegExp _buildTag = RegExp(r'build-(\d+)');
 
+  /// First CI build signed with the committed release.keystore (commit
+  /// 93f7bee). Everything older carries a per-run debug key.
+  static const int firstFixedKeyBuild = 8;
+
+  /// Shown when the system installer reports "App not installed".
+  static const String reinstallHint =
+      'Android only updates an app in place when the new APK is signed with '
+      'the same key as the installed one. Builds before build-'
+      '$firstFixedKeyBuild used a temporary key. Fix (one time): uninstall '
+      'PrivateAgent, then install the latest build from GitHub Releases. '
+      'Settings are lost on uninstall — note them first.';
+
   /// Returns the current installed build number (versionCode), 0 if unknown.
-  Future<int> currentBuild() async {
+  Future<int> currentBuild() async => (await currentVersion()).build;
+
+  /// Returns installed version name + build number.
+  Future<InstalledVersion> currentVersion() async {
     final info = await PackageInfo.fromPlatform();
-    return int.tryParse(info.buildNumber) ?? 0;
+    return InstalledVersion(
+      versionName: info.version,
+      build: int.tryParse(info.buildNumber) ?? 0,
+    );
   }
 
   /// Check GitHub for a newer release. Returns null if up to date or on error.
@@ -78,8 +113,10 @@ class UpdateService {
   }
 
   /// Download the update APK (reporting 0..1 progress) and launch the system
-  /// installer. Throws on download failure; returns the installer's result
-  /// message. The user still confirms the install in the Android dialog.
+  /// installer. Throws on download failure or if the installer could not be
+  /// launched (with the platform's message). The user still confirms the
+  /// install in the Android dialog — the outcome of THAT is only visible there
+  /// (the app is replaced on success, so it cannot observe it).
   Future<String> downloadAndInstall(
     UpdateInfo info, {
     void Function(double progress)? onProgress,
@@ -112,6 +149,11 @@ class UpdateService {
       file.path,
       type: 'application/vnd.android.package-archive',
     );
+    if (result.type != ResultType.done) {
+      throw Exception(
+        'Could not launch installer (${result.type.name}): ${result.message}',
+      );
+    }
     return result.message;
   }
 }

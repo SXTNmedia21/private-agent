@@ -42,3 +42,12 @@ To enable remote access:
 ## License
 
 This project is open-source and available for modification.
+
+## Updating the app (SXTN fork)
+
+Settings → App Updates shows the installed build and checks GitHub Releases
+(`build-N`). **Builds before build-8 were signed with a per-run CI debug key**; Android
+refuses to update across keys, so a phone on build ≤ 7 gets "App not installed".
+One-time fix: uninstall, install the latest release fresh, re-enter settings
+(`~/factory/Tools/android-agent/docs/SETTINGS-restore.md`). Details:
+`docs/GOTCHA-apk-update-signing.md` in the android-agent repo.
