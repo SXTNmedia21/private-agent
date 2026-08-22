@@ -102,14 +102,14 @@ class RpcResponse {
         'type': 'response',
         'id': id,
         'ok': ok,
-        if (data != null) 'data': data,
-        if (error != null) 'error': error,
+        'data': ?data,
+        'error': ?error,
         'took_ms': tookMs,
         if (binaryMime != null)
           'binary': <String, dynamic>{
             'mime': binaryMime,
-            if (binaryName != null) 'name': binaryName,
-            if (binaryLength != null) 'bytes': binaryLength,
+            'name': ?binaryName,
+            'bytes': ?binaryLength,
           },
       };
 
@@ -126,8 +126,8 @@ String encodeHello({
     jsonEncode(<String, dynamic>{
       'type': 'hello',
       'device_id': deviceId,
-      if (appVersion != null) 'app_version': appVersion,
-      if (buildNumber != null) 'build_number': buildNumber,
+      'app_version': ?appVersion,
+      'build_number': ?buildNumber,
     });
 
 String encodeHeartbeat() => jsonEncode(<String, dynamic>{
@@ -139,7 +139,7 @@ String encodeHeartbeat() => jsonEncode(<String, dynamic>{
 String encodeEvent(String event, [Object? data]) => jsonEncode(<String, dynamic>{
       'type': 'event',
       'event': event,
-      if (data != null) 'data': data,
+      'data': ?data,
     });
 
 /// Encode a binary payload frame correlated to [id].
@@ -155,7 +155,7 @@ Uint8List encodeBinaryFrame({
   final header = utf8.encode(jsonEncode(<String, dynamic>{
     'id': id,
     'mime': mime,
-    if (name != null) 'name': name,
+    'name': ?name,
   }));
   final out = BytesBuilder(copy: false);
   final len = ByteData(4)..setUint32(0, header.length, Endian.big);

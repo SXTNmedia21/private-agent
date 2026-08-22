@@ -1,831 +1,479 @@
+/// The one screen this app has (DESIGN §1).
+///
+/// It is configured once and restored after every reinstall, so it is built for
+/// that job and no other: the bridge connection, a permissions checklist where
+/// every row has silently broken a session before, and the update card.
+///
+/// The AI / Telegram / Autonomous-Scout sections are gone with the on-device brain
+/// (ADR-2). Nothing here talks to a model.
+library;
+
 import 'package:flutter/material.dart';
-import 'package:permission_handler/permission_handler.dart';
-import '../services/ai_service.dart';
-import '../services/update_service.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+
+import '../bridge/bridge_socket.dart';
+import '../bridge/device_channel.dart';
 import '../services/shizuku_service.dart';
-import '../services/screen_automation_service.dart';
-import '../services/telegram_service.dart';
-import '../services/remote_control_service.dart';
-import '../services/autonomous_scout.dart';
-import 'package:url_launcher/url_launcher.dart';
+import '../services/update_service.dart';
 
 class SettingsScreen extends StatefulWidget {
-  final AiService aiService;
-  final ShizukuService shizukuService;
-  final ScreenAutomationService screenAutomationService;
-  final TelegramService telegramService;
-  final RemoteControlService remoteControlService;
-  final AutonomousScout scout;
-
   const SettingsScreen({
     super.key,
-    required this.aiService,
-    required this.shizukuService,
-    required this.screenAutomationService,
-    required this.telegramService,
-    required this.remoteControlService,
-    required this.scout,
+    required this.socket,
+    required this.channel,
+    required this.onSettingsSaved,
   });
+
+  final BridgeSocket socket;
+  final DeviceChannel channel;
+  final Future<void> Function() onSettingsSaved;
 
   @override
   State<SettingsScreen> createState() => _SettingsScreenState();
 }
 
-class _SettingsScreenState extends State<SettingsScreen>
-    with WidgetsBindingObserver {
-  late TextEditingController _apiKeyController;
-  late TextEditingController _baseUrlController;
-  late TextEditingController _modelController;
-  late TextEditingController _telegramTokenController;
-  late TextEditingController _bridgeUrlController;
-  late TextEditingController _bridgeTokenController;
-  bool _obscureKey = true;
-  bool _telegramEnabled = false;
-  bool _bridgeEnabled = false;
-  double _maxSteps = 15;
+class _SettingsScreenState extends State<SettingsScreen> {
+  final _urlCtrl = TextEditingController();
+  final _tokenCtrl = TextEditingController();
+  final _secretCtrl = TextEditingController();
+  final _deviceIdCtrl = TextEditingController();
 
-  // Autonomous scout
-  bool _scoutEnabled = false;
-  String _scoutMode = 'draft';
-  double _scoutInterval = 8;
+  bool _enabled = false;
+  bool _loading = true;
+  bool _saving = false;
 
-  final UpdateService _updateService = UpdateService();
-  bool _checkingUpdate = false;
-  InstalledVersion? _installed;
+  /// Secrets are never rendered back after a save — the field shows that one is
+  /// stored and offers to replace it. A token on screen is a token in a screenshot.
+  bool _tokenStored = false;
+  bool _secretStored = false;
+  bool _replacingToken = false;
+  bool _replacingSecret = false;
 
-  final Map<String, PermissionStatus> _permissions = {};
+  _Health _health = const _Health();
+  BridgeStatus _status = const BridgeStatus(state: BridgeConnectionState.disabled);
+
+  final _shizuku = ShizukuService();
+  final _updates = UpdateService();
 
   @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance.addObserver(this);
-    _apiKeyController = TextEditingController(text: widget.aiService.apiKey);
-    _baseUrlController = TextEditingController(text: widget.aiService.baseUrl);
-    _modelController = TextEditingController(text: widget.aiService.model);
-    _telegramTokenController = TextEditingController(
-      text: widget.telegramService.botToken,
-    );
-    _telegramEnabled = widget.telegramService.isEnabled;
-    _bridgeUrlController =
-        TextEditingController(text: widget.remoteControlService.baseUrl);
-    _bridgeTokenController =
-        TextEditingController(text: widget.remoteControlService.token);
-    _bridgeEnabled = widget.remoteControlService.isEnabled;
-    _maxSteps = widget.aiService.maxSteps.toDouble();
-    _scoutEnabled = widget.scout.isEnabled;
-    _scoutMode = widget.scout.mode;
-    _updateService.currentVersion().then((v) {
-      if (mounted) setState(() => _installed = v);
-    });
-    _scoutInterval = widget.scout.intervalMin.toDouble();
-    _checkPermissions();
+    widget.socket.addListener(_onStatus);
+    _status = widget.socket.status;
+    _load();
   }
 
   @override
   void dispose() {
-    WidgetsBinding.instance.removeObserver(this);
-    _apiKeyController.dispose();
-    _baseUrlController.dispose();
-    _modelController.dispose();
-    _telegramTokenController.dispose();
-    _bridgeUrlController.dispose();
-    _bridgeTokenController.dispose();
+    widget.socket.removeListener(_onStatus);
+    _urlCtrl.dispose();
+    _tokenCtrl.dispose();
+    _secretCtrl.dispose();
+    _deviceIdCtrl.dispose();
     super.dispose();
   }
 
-  @override
-  void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.resumed) {
-      // Refresh the UI when coming back from Android Settings
-      setState(() {});
-    }
+  void _onStatus(BridgeStatus s) {
+    if (mounted) setState(() => _status = s);
   }
 
-  Future<void> _checkPermissions() async {
-    final perms = {
-      'Microphone': Permission.microphone,
-      'Contacts': Permission.contacts,
-      'Phone': Permission.phone,
-      'SMS': Permission.sms,
-      'Notifications': Permission.notification,
-    };
-
-    for (final entry in perms.entries) {
-      _permissions[entry.key] = await entry.value.status;
-    }
-    if (mounted) setState(() {});
+  Future<void> _load() async {
+    final prefs = await SharedPreferences.getInstance();
+    final token = prefs.getString('bridge_token') ?? '';
+    final secret = prefs.getString('device_secret') ?? '';
+    if (!mounted) return;
+    setState(() {
+      _urlCtrl.text = prefs.getString('bridge_base_url') ?? 'https://agent-bridge.sxtn.online';
+      _deviceIdCtrl.text = prefs.getString('device_id') ?? 'a20e';
+      _enabled = prefs.getBool('bridge_enabled') ?? false;
+      _tokenStored = token.isNotEmpty;
+      _secretStored = secret.isNotEmpty;
+      _loading = false;
+    });
+    await _refreshHealth();
   }
 
-  Future<void> _requestPermission(String name, Permission permission) async {
-    final status = await permission.request();
-    setState(() => _permissions[name] = status);
-  }
-
-  Future<void> _saveApiSettings() async {
-    await widget.aiService.saveSettings(
-      apiKey: _apiKeyController.text.trim(),
-      baseUrl: _baseUrlController.text.trim(),
-      model: _modelController.text.trim(),
-    );
-
-    await widget.telegramService.saveSettings(
-      botToken: _telegramTokenController.text.trim(),
-      isEnabled: _telegramEnabled,
-    );
-
-    await widget.remoteControlService.saveSettings(
-      baseUrl: _bridgeUrlController.text.trim(),
-      token: _bridgeTokenController.text.trim(),
-      isEnabled: _bridgeEnabled,
-    );
-
-    await widget.aiService.saveMaxSteps(_maxSteps.toInt());
-
-    // Scout reads bridge_base_url/bridge_token from prefs, which the
-    // remoteControlService.saveSettings above just persisted.
-    await widget.scout.saveSettings(
-      enabled: _scoutEnabled,
-      mode: _scoutMode,
-      intervalMin: _scoutInterval.toInt(),
-    );
-
-    if (mounted) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('Settings saved!')));
-    }
-  }
-
-  Future<void> _fetchModels() async {
-    final baseUrl = _baseUrlController.text.trim();
-    final apiKey = _apiKeyController.text.trim();
-
-    if (baseUrl.isEmpty || apiKey.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Please enter Base URL and API Key first.')),
+  Future<void> _refreshHealth() async {
+    final a11y = await widget.channel.accessibilityRunning();
+    final notif = await widget.channel.notificationAccessGranted();
+    final battery = await widget.channel.batteryUnrestricted();
+    final fg = await widget.channel.isForegroundServiceRunning();
+    await _shizuku.checkAvailability();
+    if (!mounted) return;
+    setState(() {
+      _health = _Health(
+        accessibility: a11y,
+        notificationAccess: notif.value ?? false,
+        batteryUnrestricted: battery.value ?? false,
+        foregroundRunning: fg.value ?? false,
+        shizukuAvailable: _shizuku.isAvailable,
+        shizukuGranted: _shizuku.hasPermission,
       );
+    });
+  }
+
+  Future<void> _save() async {
+    setState(() => _saving = true);
+    final prefs = await SharedPreferences.getInstance();
+
+    final url = _urlCtrl.text.trim();
+    if (url.isNotEmpty && !url.startsWith('https://') && !url.startsWith('http://')) {
+      _toast('Bridge URL must start with https://');
+      setState(() => _saving = false);
       return;
     }
+    await prefs.setString('bridge_base_url', url);
+    await prefs.setString('device_id', _deviceIdCtrl.text.trim());
 
-    // Show loading
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (context) => const Center(child: CircularProgressIndicator()),
-    );
-
-    final models = await widget.aiService.fetchAvailableModels(baseUrl, apiKey);
-
-    // Hide loading
-    if (mounted) Navigator.pop(context);
-
-    if (models.isEmpty) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('No models found or error fetching models.')),
-        );
-      }
-      return;
+    // Only overwrite a stored secret when the operator actually typed a new one.
+    if (_tokenCtrl.text.trim().isNotEmpty) {
+      await prefs.setString('bridge_token', _tokenCtrl.text.trim());
+      _tokenStored = true;
     }
-
-    if (mounted) {
-      showDialog(
-        context: context,
-        builder: (context) => AlertDialog(
-          title: const Text('Select a Model'),
-          content: SizedBox(
-            width: double.maxFinite,
-            height: 300,
-            child: ListView.builder(
-              itemCount: models.length,
-              itemBuilder: (context, index) {
-                return ListTile(
-                  title: Text(models[index]),
-                  onTap: () {
-                    setState(() {
-                      _modelController.text = models[index];
-                    });
-                    Navigator.pop(context);
-                  },
-                );
-              },
-            ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text('Cancel'),
-            ),
-          ],
-        ),
-      );
+    if (_secretCtrl.text.trim().isNotEmpty) {
+      await prefs.setString('device_secret', _secretCtrl.text.trim());
+      _secretStored = true;
     }
+    // BootReceiver reads this key (as "flutter.bridge_enabled") to decide whether to
+    // start the service after a reboot.
+    await prefs.setBool('bridge_enabled', _enabled);
+
+    _tokenCtrl.clear();
+    _secretCtrl.clear();
+    setState(() {
+      _replacingToken = false;
+      _replacingSecret = false;
+      _saving = false;
+    });
+
+    await widget.onSettingsSaved();
+    if (mounted) _toast('Saved');
   }
 
-  /// Manual update check from the Settings button.
-  Future<void> _checkForUpdate() async {
-    setState(() => _checkingUpdate = true);
-    try {
-      final current = await _updateService.currentBuild();
-      final info = await _updateService.check();
-      if (!mounted) return;
-      if (info == null) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Up to date (build $current).')),
-        );
-        return;
-      }
-      final go = await showDialog<bool>(
-        context: context,
-        builder: (ctx) => AlertDialog(
-          title: Text('Update available — ${info.name} (installed: build $current)'),
-          content: SingleChildScrollView(
-            child: Text(
-              info.notes.trim().isEmpty
-                  ? 'A newer version is available (build ${info.build}).'
-                  : info.notes.trim(),
-            ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(ctx, false),
-              child: const Text('Later'),
-            ),
-            FilledButton(
-              onPressed: () => Navigator.pop(ctx, true),
-              child: const Text('Update now'),
-            ),
-          ],
-        ),
-      );
-      if (go == true && mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Downloading update…')),
-        );
-        try {
-          await _updateService.downloadAndInstall(info);
-          if (mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(
-                duration: Duration(seconds: 12),
-                content: Text(
-                  'Installer opened. If Android says "App not installed", '
-                  'the installed build was signed with a different key — '
-                  'uninstall PrivateAgent once and install the new build '
-                  'fresh (see the note under App Updates).',
-                ),
-              ),
-            );
-          }
-        } catch (e) {
-          if (mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(
-                duration: const Duration(seconds: 10),
-                content: Text('Update failed: $e'),
-              ),
-            );
-          }
-        }
-      }
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Update check failed: $e')),
-        );
-      }
-    } finally {
-      if (mounted) setState(() => _checkingUpdate = false);
-    }
+  void _toast(String msg) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
   }
 
   @override
   Widget build(BuildContext context) {
+    if (_loading) {
+      return const Scaffold(body: Center(child: CircularProgressIndicator()));
+    }
     return Scaffold(
-      appBar: AppBar(title: const Text('Settings')),
+      appBar: AppBar(
+        title: const Text('PrivateAgent'),
+        actions: [
+          IconButton(
+            tooltip: 'Refresh checks',
+            onPressed: _refreshHealth,
+            icon: const Icon(Icons.refresh),
+          ),
+        ],
+      ),
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [
-          // API Settings
-          Text(
-            'AI Configuration',
-            style: Theme.of(
-              context,
-            ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
-          ),
+          _sectionTitle('Bridge'),
+          _connectionCard(),
           const SizedBox(height: 12),
           TextField(
-            controller: _apiKeyController,
-            decoration: InputDecoration(
-              labelText: 'API Key',
-              hintText: 'sk-...',
-              border: const OutlineInputBorder(),
-              suffixIcon: IconButton(
-                icon: Icon(
-                  _obscureKey ? Icons.visibility_off : Icons.visibility,
-                ),
-                onPressed: () => setState(() => _obscureKey = !_obscureKey),
-              ),
-            ),
-            obscureText: _obscureKey,
-          ),
-          const SizedBox(height: 12),
-          TextField(
-            controller: _baseUrlController,
+            controller: _urlCtrl,
             decoration: const InputDecoration(
-              labelText: 'API Base URL',
-              hintText: 'https://api.deepseek.com',
-              border: OutlineInputBorder(),
-            ),
-          ),
-          const SizedBox(height: 12),
-          Row(
-            children: [
-              Expanded(
-                child: TextField(
-                  controller: _modelController,
-                  decoration: const InputDecoration(
-                    labelText: 'Model',
-                    hintText: 'deepseek-chat',
-                    border: OutlineInputBorder(),
-                  ),
-                ),
-              ),
-              const SizedBox(width: 8),
-              FilledButton.tonalIcon(
-                onPressed: _fetchModels,
-                icon: const Icon(Icons.cloud_download),
-                label: const Text('Fetch'),
-              ),
-            ],
-          ),
-          const SizedBox(height: 24),
-          
-          Text(
-            'Maximum Steps Per Task: ${_maxSteps.toInt()}',
-            style: const TextStyle(fontWeight: FontWeight.w500),
-          ),
-          Slider(
-            value: _maxSteps,
-            min: 5,
-            max: 50,
-            divisions: 45,
-            label: _maxSteps.toInt().toString(),
-            onChanged: (value) {
-              setState(() {
-                _maxSteps = value;
-              });
-            },
-          ),
-
-          const SizedBox(height: 16),
-          const Divider(height: 32),
-          Text(
-            'Autonomous Scout (Sixten works on his own)',
-            style: Theme.of(context)
-                .textTheme
-                .titleMedium
-                ?.copyWith(fontWeight: FontWeight.bold),
-          ),
-          const SizedBox(height: 6),
-          Text(
-            'When on, Sixten finds posts on rotating hashtags and composes comments '
-            'in his own voice — on a paced timer, while the app is open. '
-            'Draft mode reports the comment without posting; Live mode posts it. '
-            'Everything shows in the activity dashboard.',
-            style: Theme.of(context).textTheme.bodySmall,
-          ),
-          SwitchListTile(
-            title: const Text('Enable Autonomous Scout'),
-            subtitle: Text('Requires the Claude Bridge above to be configured.'),
-            value: _scoutEnabled,
-            onChanged: (v) => setState(() => _scoutEnabled = v),
-            contentPadding: EdgeInsets.zero,
-          ),
-          Row(
-            children: [
-              const Text('Mode:'),
-              const SizedBox(width: 12),
-              ChoiceChip(
-                label: const Text('Draft'),
-                selected: _scoutMode == 'draft',
-                onSelected: (_) => setState(() => _scoutMode = 'draft'),
-              ),
-              const SizedBox(width: 8),
-              ChoiceChip(
-                label: const Text('Live (posts)'),
-                selected: _scoutMode == 'live',
-                onSelected: (_) => setState(() => _scoutMode = 'live'),
-              ),
-            ],
-          ),
-          const SizedBox(height: 8),
-          Text('Interval: every ${_scoutInterval.toInt()} min'),
-          Slider(
-            value: _scoutInterval,
-            min: 3,
-            max: 60,
-            divisions: 57,
-            label: '${_scoutInterval.toInt()} min',
-            onChanged: (v) => setState(() => _scoutInterval = v),
-          ),
-
-          const SizedBox(height: 8),
-          const Divider(height: 32),
-          Text(
-            'App Updates',
-            style: Theme.of(context)
-                .textTheme
-                .titleMedium
-                ?.copyWith(fontWeight: FontWeight.bold),
-          ),
-          const SizedBox(height: 4),
-          Text(
-            _installed == null
-                ? 'Installed: …'
-                : 'Installed: v${_installed!.versionName} · build ${_installed!.build}',
-            style: Theme.of(context).textTheme.bodySmall,
-          ),
-          if (_installed?.needsReinstall == true) ...[
-            const SizedBox(height: 8),
-            Card(
-              color: Theme.of(context).colorScheme.errorContainer,
-              child: Padding(
-                padding: const EdgeInsets.all(12),
-                child: Text(
-                  'This build (${_installed!.build}) is signed with a temporary '
-                  'key. In-app update will fail with "App not installed". '
-                  '${UpdateService.reinstallHint}',
-                  style: TextStyle(
-                    color: Theme.of(context).colorScheme.onErrorContainer,
-                  ),
-                ),
-              ),
-            ),
-          ],
-          const SizedBox(height: 8),
-          OutlinedButton.icon(
-            onPressed: _checkingUpdate ? null : _checkForUpdate,
-            icon: _checkingUpdate
-                ? const SizedBox(
-                    width: 16,
-                    height: 16,
-                    child: CircularProgressIndicator(strokeWidth: 2),
-                  )
-                : const Icon(Icons.system_update),
-            label: Text(_checkingUpdate ? 'Checking…' : 'Check for updates'),
-          ),
-
-          const SizedBox(height: 12),
-          const Divider(height: 32),
-
-          // Telegram Settings
-          Text(
-            'Telegram Remote Access (Optional)',
-            style: Theme.of(
-              context,
-            ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
-          ),
-          const SizedBox(height: 12),
-          TextField(
-            controller: _telegramTokenController,
-            decoration: const InputDecoration(
-              labelText: 'Telegram Bot Token',
-              hintText: '123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11',
-              border: OutlineInputBorder(),
-            ),
-          ),
-          SwitchListTile(
-            title: const Text('Enable Telegram Bot'),
-            subtitle: const Text('Allows remote control via Telegram chat'),
-            value: _telegramEnabled,
-            onChanged: (val) {
-              setState(() => _telegramEnabled = val);
-            },
-            contentPadding: EdgeInsets.zero,
-          ),
-
-          const Divider(height: 32),
-
-          // Claude Bridge (Remote Control)
-          Text(
-            'Claude Bridge (Remote Control)',
-            style: Theme.of(
-              context,
-            ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
-          ),
-          const SizedBox(height: 8),
-          Text(
-            'Connects this device to the agent-bridge control plane so Claude '
-            '(over MCP) and the web dashboard can send tasks and read back results.',
-            style: Theme.of(context).textTheme.bodySmall,
-          ),
-          const SizedBox(height: 12),
-          TextField(
-            controller: _bridgeUrlController,
-            decoration: const InputDecoration(
-              labelText: 'Bridge Base URL',
+              labelText: 'Bridge URL',
               hintText: 'https://agent-bridge.sxtn.online',
               border: OutlineInputBorder(),
             ),
+            keyboardType: TextInputType.url,
+            autocorrect: false,
+          ),
+          const SizedBox(height: 12),
+          _secretField(
+            label: 'Device token',
+            controller: _tokenCtrl,
+            stored: _tokenStored,
+            replacing: _replacingToken,
+            onReplace: () => setState(() => _replacingToken = true),
+            help: 'op://sxtn-os/agent-bridge/device_token',
+          ),
+          const SizedBox(height: 12),
+          _secretField(
+            label: 'Device secret',
+            controller: _secretCtrl,
+            stored: _secretStored,
+            replacing: _replacingSecret,
+            onReplace: () => setState(() => _replacingSecret = true),
+            help: 'op://sxtn-os/agent-bridge/device_secret — signs the approval gate',
           ),
           const SizedBox(height: 12),
           TextField(
-            controller: _bridgeTokenController,
+            controller: _deviceIdCtrl,
             decoration: const InputDecoration(
-              labelText: 'Device Token',
-              hintText: 'DEVICE_TOKEN from the bridge',
+              labelText: 'Device id',
+              helperText: 'Must match a devices row on the bridge, or the socket is refused',
               border: OutlineInputBorder(),
             ),
-            obscureText: true,
+            autocorrect: false,
           ),
           SwitchListTile(
-            title: const Text('Enable Bridge'),
-            subtitle: const Text('Poll the bridge for tasks and post results back'),
-            value: _bridgeEnabled,
-            onChanged: (val) => setState(() => _bridgeEnabled = val),
             contentPadding: EdgeInsets.zero,
+            title: const Text('Enabled'),
+            subtitle: const Text('Dial out to the bridge and auto-reconnect'),
+            value: _enabled,
+            onChanged: (v) => setState(() => _enabled = v),
           ),
-
-          const SizedBox(height: 12),
+          const SizedBox(height: 8),
           FilledButton.icon(
-            onPressed: _saveApiSettings,
-            icon: const Icon(Icons.save),
-            label: const Text('Save Settings'),
+            onPressed: _saving ? null : _save,
+            icon: _saving
+                ? const SizedBox(
+                    width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
+                : const Icon(Icons.save),
+            label: const Text('Save'),
           ),
 
-          const Divider(height: 32),
-
-          // Permissions
-          Text(
-            'Permissions',
-            style: Theme.of(
-              context,
-            ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
+          const SizedBox(height: 28),
+          _sectionTitle('Permissions & health'),
+          _checkRow(
+            'Accessibility service',
+            _health.accessibility,
+            onFix: widget.channel.openAccessibilitySettings,
           ),
-          const SizedBox(height: 12),
-          ..._buildPermissionTiles(),
-
-          const Divider(height: 32),
-
-          // Accessibility Service
-          Text(
-            'Screen Control (Accessibility)',
-            style: Theme.of(
-              context,
-            ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
+          _checkRow(
+            'Notification access',
+            _health.notificationAccess,
+            onFix: () => widget.channel.openNotificationAccessSettings(),
           ),
-          const SizedBox(height: 8),
-          Text(
-            'Required for reading screen content and performing taps, scrolls, and typing in other apps.',
-            style: Theme.of(context).textTheme.bodySmall,
+          _checkRow(
+            'Battery unrestricted',
+            _health.batteryUnrestricted,
+            onFix: () => widget.channel.requestBatteryUnrestricted(),
+            why: 'OEM battery saver kills the socket otherwise',
           ),
-          const SizedBox(height: 12),
-          _buildAccessibilityCard(),
-
-          const Divider(height: 32),
-
-          // Shizuku
-          Text(
-            'Shizuku (Optional)',
-            style: Theme.of(
-              context,
-            ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
-          ),
-          const SizedBox(height: 8),
-          Text(
-            'Shizuku allows extra features like toggling WiFi, force-stopping apps, and running ADB commands without root.',
-            style: Theme.of(context).textTheme.bodySmall,
-          ),
-          const SizedBox(height: 12),
-          _buildShizukuCard(),
-
-          const Divider(height: 32),
-
-          // About / Links
-          Text(
-            'About',
-            style: Theme.of(
-              context,
-            ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
-          ),
-          const SizedBox(height: 8),
-          ListTile(
-            contentPadding: EdgeInsets.zero,
-            title: const Text('Project Repository'),
-            subtitle: const Text('View the official source code on GitHub'),
-            onTap: () {
-              launchUrl(
-                Uri.parse('https://github.com/orailnoor/private-agent'),
-                mode: LaunchMode.externalApplication,
-              );
-            },
-          ),
-          ListTile(
-            contentPadding: EdgeInsets.zero,
-            title: const Text('Orailnoor on YouTube'),
-            subtitle: const Text('Subscribe for project updates and tutorials'),
-            onTap: () {
-              launchUrl(
-                Uri.parse('https://www.youtube.com/orailnoor'),
-                mode: LaunchMode.externalApplication,
-              );
-            },
+          _checkRow('Foreground service', _health.foregroundRunning),
+          _checkRow(
+            'Shizuku',
+            _health.shizukuGranted,
+            optional: true,
+            why: _health.shizukuAvailable ? 'installed, not granted' : 'not installed (optional)',
+            onFix: _health.shizukuAvailable ? () => _shizuku.requestPermission() : null,
           ),
 
-          const SizedBox(height: 32),
+          const SizedBox(height: 28),
+          _sectionTitle('App updates'),
+          _UpdateCard(updates: _updates),
+          const SizedBox(height: 40),
         ],
       ),
     );
   }
 
-  List<Widget> _buildPermissionTiles() {
-    final permissionMap = {
-      'Microphone': Permission.microphone,
-      'Contacts': Permission.contacts,
-      'Phone': Permission.phone,
-      'SMS': Permission.sms,
-      'Notifications': Permission.notification,
-    };
-
-    final icons = {
-      'Microphone': Icons.mic,
-      'Contacts': Icons.contacts,
-      'Phone': Icons.phone,
-      'SMS': Icons.sms,
-      'Notifications': Icons.notifications,
-    };
-
-    return permissionMap.entries.map((entry) {
-      final status = _permissions[entry.key];
-      final isGranted = status?.isGranted ?? false;
-
-      return ListTile(
-        leading: Icon(icons[entry.key]),
-        title: Text(entry.key),
-        trailing: isGranted
-            ? const Icon(Icons.check_circle, color: Colors.green)
-            : TextButton(
-                onPressed: () => _requestPermission(entry.key, entry.value),
-                child: const Text('Grant'),
-              ),
-        subtitle: Text(
-          isGranted
-              ? 'Granted'
-              : (status?.isDenied ?? true
-                    ? 'Not granted'
-                    : 'Denied permanently'),
-          style: TextStyle(
-            color: isGranted ? Colors.green : Colors.orange,
-            fontSize: 12,
-          ),
-        ),
+  Widget _sectionTitle(String text) => Padding(
+        padding: const EdgeInsets.only(bottom: 8),
+        child: Text(text, style: Theme.of(context).textTheme.titleMedium),
       );
-    }).toList();
-  }
 
-  Widget _buildShizukuCard() {
+  /// The most useful widget on the screen: it says what the connection is actually
+  /// doing, including *why* it was refused.
+  Widget _connectionCard() {
+    final (icon, color) = switch (_status.state) {
+      BridgeConnectionState.connected => (Icons.check_circle, Colors.green),
+      BridgeConnectionState.connecting => (Icons.sync, Colors.amber),
+      BridgeConnectionState.reconnecting => (Icons.sync_problem, Colors.amber),
+      BridgeConnectionState.refused => (Icons.error, Colors.red),
+      BridgeConnectionState.disabled => (Icons.pause_circle, Colors.grey),
+    };
     return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Icon(
-                  widget.shizukuService.isAvailable
-                      ? Icons.link
-                      : Icons.link_off,
-                  color: widget.shizukuService.isAvailable
-                      ? Colors.green
-                      : Colors.grey,
-                ),
-                const SizedBox(width: 8),
-                Text(
-                  widget.shizukuService.isAvailable
-                      ? 'Shizuku is running'
-                      : 'Shizuku not detected',
-                  style: TextStyle(
-                    fontWeight: FontWeight.w600,
-                    color: widget.shizukuService.isAvailable
-                        ? Colors.green
-                        : Colors.grey,
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 12),
-            if (!widget.shizukuService.isAvailable) ...[
-              const Text(
-                '1. Install Shizuku from Play Store\n'
-                '2. Open Shizuku and start it via Wireless Debugging\n'
-                '3. Come back here and tap "Check Again"',
-                style: TextStyle(fontSize: 13),
-              ),
-              const SizedBox(height: 12),
-              OutlinedButton(
-                onPressed: () async {
-                  await widget.shizukuService.checkAvailability();
-                  if (mounted) setState(() {});
-                },
-                child: const Text('Check Again'),
-              ),
-            ] else if (!widget.shizukuService.hasPermission) ...[
-              OutlinedButton(
-                onPressed: () async {
-                  await widget.shizukuService.requestPermission();
-                  if (mounted) setState(() {});
-                },
-                child: const Text('Grant Shizuku Permission'),
-              ),
-            ] else ...[
-              Row(
-                children: [
-                  const Icon(Icons.check_circle, color: Colors.green, size: 16),
-                  const SizedBox(width: 4),
-                  Text(
-                    'Permission granted — ADB commands available',
-                    style: TextStyle(color: Colors.green[700], fontSize: 13),
-                  ),
-                ],
-              ),
-            ],
-          ],
-        ),
+      child: ListTile(
+        leading: Icon(icon, color: color),
+        title: Text(_status.line),
+        subtitle: _status.state == BridgeConnectionState.refused
+            ? const Text('Check the device token — it was rotated on 2026-08-22')
+            : null,
       ),
     );
   }
 
-  Widget _buildAccessibilityCard() {
-    return FutureBuilder<bool>(
-      future: widget.screenAutomationService.isServiceRunning(),
-      builder: (context, snapshot) {
-        final isRunning = snapshot.data ?? false;
+  Widget _secretField({
+    required String label,
+    required TextEditingController controller,
+    required bool stored,
+    required bool replacing,
+    required VoidCallback onReplace,
+    required String help,
+  }) {
+    if (stored && !replacing) {
+      return Card(
+        child: ListTile(
+          leading: const Icon(Icons.lock),
+          title: Text(label),
+          subtitle: Text('•••••••••••  ·  $help'),
+          trailing: TextButton(onPressed: onReplace, child: const Text('Replace')),
+        ),
+      );
+    }
+    return TextField(
+      controller: controller,
+      obscureText: true,
+      autocorrect: false,
+      enableSuggestions: false,
+      decoration: InputDecoration(
+        labelText: label,
+        helperText: help,
+        helperMaxLines: 2,
+        border: const OutlineInputBorder(),
+      ),
+    );
+  }
 
-        return Card(
-          child: Padding(
-            padding: const EdgeInsets.all(16),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  children: [
-                    Icon(
-                      isRunning ? Icons.visibility : Icons.visibility_off,
-                      color: isRunning ? Colors.green : Colors.grey,
-                    ),
-                    const SizedBox(width: 8),
-                    Text(
-                      isRunning
-                          ? 'Screen Control is active'
-                          : 'Screen Control is disabled',
-                      style: TextStyle(
-                        fontWeight: FontWeight.w600,
-                        color: isRunning ? Colors.green : Colors.grey,
-                      ),
-                    ),
-                  ],
+  Widget _checkRow(
+    String label,
+    bool ok, {
+    Future<void> Function()? onFix,
+    VoidCallback? onFixSync,
+    String? why,
+    bool optional = false,
+  }) {
+    return ListTile(
+      contentPadding: EdgeInsets.zero,
+      leading: Icon(
+        ok ? Icons.check_circle : (optional ? Icons.remove_circle_outline : Icons.cancel),
+        color: ok ? Colors.green : (optional ? Colors.grey : Colors.red),
+      ),
+      title: Text(label),
+      subtitle: why == null ? null : Text(why),
+      trailing: (!ok && (onFix != null || onFixSync != null))
+          ? TextButton(
+              onPressed: () async {
+                if (onFix != null) await onFix();
+                onFixSync?.call();
+                await Future<void>.delayed(const Duration(milliseconds: 400));
+                await _refreshHealth();
+              },
+              child: const Text('Fix'),
+            )
+          : null,
+    );
+  }
+}
+
+class _Health {
+  const _Health({
+    this.accessibility = false,
+    this.notificationAccess = false,
+    this.batteryUnrestricted = false,
+    this.foregroundRunning = false,
+    this.shizukuAvailable = false,
+    this.shizukuGranted = false,
+  });
+
+  final bool accessibility;
+  final bool notificationAccess;
+  final bool batteryUnrestricted;
+  final bool foregroundRunning;
+  final bool shizukuAvailable;
+  final bool shizukuGranted;
+}
+
+/// Unchanged in substance from the shipped build-11 guard: shows the installed
+/// build and warns when build < 8, which cannot update in place because the
+/// signing key changed (see docs/GOTCHA-apk-update-signing.md).
+class _UpdateCard extends StatefulWidget {
+  const _UpdateCard({required this.updates});
+  final UpdateService updates;
+
+  @override
+  State<_UpdateCard> createState() => _UpdateCardState();
+}
+
+class _UpdateCardState extends State<_UpdateCard> {
+  InstalledVersion? _installed;
+  String _status = '';
+  bool _busy = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadInstalled();
+  }
+
+  Future<void> _loadInstalled() async {
+    final v = await widget.updates.currentVersion();
+    if (mounted) setState(() => _installed = v);
+  }
+
+  Future<void> _checkAndInstall() async {
+    setState(() {
+      _busy = true;
+      _status = 'Checking…';
+    });
+    try {
+      final info = await widget.updates.check();
+      if (info == null) {
+        if (mounted) setState(() => _status = 'Up to date.');
+        return;
+      }
+      if (mounted) setState(() => _status = 'Downloading build ${info.build}…');
+      final msg = await widget.updates.downloadAndInstall(
+        info,
+        onProgress: (p) {
+          if (mounted && p > 0) {
+            setState(() => _status = 'Downloading build ${info.build}… ${(p * 100).round()}%');
+          }
+        },
+      );
+      if (mounted) setState(() => _status = msg.isEmpty ? 'Installer launched.' : msg);
+    } catch (e) {
+      // Surface the installer error rather than silently doing nothing — the
+      // "App not installed" case has a specific cause and a specific fix.
+      if (mounted) setState(() => _status = '$e\n\n${UpdateService.reinstallHint}');
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final v = _installed;
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('Installed: ${v?.toString() ?? '…'}'),
+            if (v != null && v.needsReinstall) ...[
+              const SizedBox(height: 8),
+              Container(
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  color: Colors.red.withValues(alpha: 0.15),
+                  borderRadius: BorderRadius.circular(8),
                 ),
-                const SizedBox(height: 12),
-                if (!isRunning) ...[
-                  const Text(
-                    'Tap below to open Accessibility Settings, then find "PrivateAgent Screen Control" and enable it.',
-                    style: TextStyle(fontSize: 13),
-                  ),
-                  const SizedBox(height: 12),
-                  OutlinedButton.icon(
-                    onPressed: () async {
-                      await widget.screenAutomationService
-                          .openAccessibilitySettings();
-                    },
-                    icon: const Icon(Icons.settings),
-                    label: const Text('Open Accessibility Settings'),
-                  ),
-                ] else ...[
-                  Row(
-                    children: [
-                      const Icon(
-                        Icons.check_circle,
-                        color: Colors.green,
-                        size: 16,
-                      ),
-                      const SizedBox(width: 4),
-                      Text(
-                        'Can read screen, tap, scroll, and type in other apps',
-                        style: TextStyle(
-                          color: Colors.green[700],
-                          fontSize: 13,
-                        ),
-                      ),
-                    ],
-                  ),
-                ],
-              ],
+                child: Text(
+                  'This build predates the fixed signing key (build '
+                  '${UpdateService.firstFixedKeyBuild}). Android cannot update it in '
+                  'place — uninstall once, then install the new build.',
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
+              ),
+            ],
+            if (_status.isNotEmpty) ...[
+              const SizedBox(height: 8),
+              Text(_status, style: Theme.of(context).textTheme.bodySmall),
+            ],
+            const SizedBox(height: 8),
+            OutlinedButton.icon(
+              onPressed: _busy ? null : _checkAndInstall,
+              icon: _busy
+                  ? const SizedBox(
+                      width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
+                  : const Icon(Icons.system_update),
+              label: const Text('Check for updates'),
             ),
-          ),
-        );
-      },
+          ],
+        ),
+      ),
     );
   }
 }
