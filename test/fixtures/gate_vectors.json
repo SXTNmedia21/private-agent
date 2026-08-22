@@ -1,0 +1,66 @@
+{
+  "_comment": "Cross-language HMAC fixture for the on-device hard gate (ADR-3 D4). Generated from agent-bridge/src/device/gate-signing.ts. BOTH the TypeScript suite and the Dart suite assert every vector. If you change the canonical form, regenerate this and both suites fail until the two repos agree again — that is the point.",
+  "algorithm": "HMAC-SHA256, lowercase hex, over a NUL-delimited canonical string: v1<NUL>op<NUL>target_hash<NUL>approval_id<NUL>exp",
+  "vectors": [
+    {
+      "name": "typical type_text submit",
+      "device_secret": "p2-test-device-secret-not-a-real-one",
+      "payload": {
+        "op": "device_type_text",
+        "target_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "approval_id": "01J8Z9QK",
+        "exp": 1787400000000
+      },
+      "canonical_utf8_hex": "7631006465766963655f747970655f7465787400616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161610030314a385a39514b0031373837343030303030303030",
+      "signature": "25e7cc4ec8d0a7d6496b170617afe8858fe35e085dc3fd3e1accce569c412853"
+    },
+    {
+      "name": "double tap",
+      "device_secret": "p2-test-device-secret-not-a-real-one",
+      "payload": {
+        "op": "device_double_tap",
+        "target_hash": "b3f1c2d4e5a6970819283746556473829100aabbccddeeff00112233445566ff",
+        "approval_id": "appr_0000000000000001",
+        "exp": 1787400900000
+      },
+      "canonical_utf8_hex": "7631006465766963655f646f75626c655f746170006233663163326434653561363937303831393238333734363535363437333832393130306161626263636464656566663030313132323333343435353636666600617070725f303030303030303030303030303030310031373837343030393030303030",
+      "signature": "9aeb6f368ec1954d695006db5dd03e8af0a817ba3f26b326ef7b649d9ee99c90"
+    },
+    {
+      "name": "notification reply",
+      "device_secret": "p2-test-device-secret-not-a-real-one",
+      "payload": {
+        "op": "device_notification_reply",
+        "target_hash": "0000000000000000000000000000000000000000000000000000000000000000",
+        "approval_id": "appr-with-dashes-123",
+        "exp": 1
+      },
+      "canonical_utf8_hex": "7631006465766963655f6e6f74696669636174696f6e5f7265706c79003030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303000617070722d776974682d6461736865732d3132330031",
+      "signature": "0980bd9ceb75fabc5e5c05a8fada38101186405c053beb4387b8a8c05d35989c"
+    },
+    {
+      "name": "share file",
+      "device_secret": "p2-test-device-secret-not-a-real-one",
+      "payload": {
+        "op": "device_share_file",
+        "target_hash": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+        "approval_id": "A",
+        "exp": 9007199254740991
+      },
+      "canonical_utf8_hex": "7631006465766963655f73686172655f66696c65006666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666600410039303037313939323534373430393931",
+      "signature": "2caf8f0db482d04e970f8e7ff09c9f428b5d0b8981dc607456237c2499ab456f"
+    },
+    {
+      "name": "unicode in nothing but exp boundary",
+      "device_secret": "p2-test-device-secret-not-a-real-one",
+      "payload": {
+        "op": "device_type_text",
+        "target_hash": "deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
+        "approval_id": "z",
+        "exp": 0
+      },
+      "canonical_utf8_hex": "7631006465766963655f747970655f746578740064656164626565666465616462656566646561646265656664656164626565666465616462656566646561646265656664656164626565666465616462656566007a0030",
+      "signature": "f2aa5da9ffa9542bb4d7247c2a43f5cd591cd56cd2ec4e7502d473754258c6c2"
+    }
+  ]
+}

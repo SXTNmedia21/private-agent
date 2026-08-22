@@ -1,7 +1,7 @@
 name: private_agent
-description: "AI agent for Android"
+description: "Executor for the agent-bridge control plane"
 publish_to: 'none'
-version: 0.1.0
+version: 0.2.0
 
 environment:
   sdk: ^3.10.3
@@ -10,41 +10,41 @@ dependencies:
   flutter:
     sdk: flutter
 
-  # HTTP & API
+  # Device RPC transport (ADR-4). The phone dials OUT to the bridge.
+  web_socket_channel: ^3.0.1
+  # HMAC-SHA256 for the on-device hard gate (ADR-3 D4) and the screen fingerprint.
+  crypto: ^3.0.6
+
+  # HTTP — the in-app update checker only. The agent itself talks over the socket.
   http: ^1.4.0
 
   # In-app self-update (download + install APK from GitHub Releases)
   open_filex: ^4.5.0
   package_info_plus: ^8.0.0
 
-  # Voice
-  speech_to_text: ^7.0.0
-  flutter_tts: ^4.2.0
-
-  # App management
+  # App management — device_open_app / device_list_apps / device_open_url
   installed_apps: ^1.5.0
   url_launcher: ^6.3.0
   android_intent_plus: ^5.1.0
 
-  # Contacts
-  flutter_contacts: ^1.1.9+2
-
-  # Permissions
-  permission_handler: ^11.4.0
-
-  # Storage
+  # Settings persistence (bridge url, tokens, device id)
   shared_preferences: ^2.3.0
+  # Scoped file dir for device_list_files / read / write
   path_provider: ^2.1.0
 
-  # Notifications
-  flutter_local_notifications: ^18.0.0
-
-  # System control
-  volume_controller: ^2.0.8
-  screen_brightness: ^1.0.1
-
-  # Shizuku (optional)
+  # Shizuku (optional, onboarding kept)
   shizuku_api: ^1.2.2
+
+# REMOVED in P2 with the on-device brain (ADR-2). Each of these existed only to serve
+# a capability that is now either the bridge's job or deleted outright:
+#   speech_to_text, flutter_tts   -> voice_service; the phone no longer converses
+#   flutter_contacts              -> contacts_service; went with make_call/send_sms
+#   permission_handler            -> the old permissions grid asked for mic/contacts/phone/SMS,
+#                                    none of which this app requests any more
+#   volume_controller,
+#   screen_brightness             -> system_control_service; not a device_* primitive
+#   flutter_local_notifications   -> the foreground-service notification is native Kotlin now
+# Dropping them also drops the permissions they merged into the manifest.
 
 dev_dependencies:
   flutter_test:

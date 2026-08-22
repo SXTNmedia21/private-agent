@@ -12,6 +12,11 @@ class MainActivity : FlutterActivity() {
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
 
+        // P2 primitive surface. The legacy channel below stays registered only until its Dart
+        // callers are deleted — do not add anything new to it.
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, DeviceChannel.CHANNEL)
+            .setMethodCallHandler(DeviceChannel(this))
+
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, CHANNEL)
             .setMethodCallHandler { call, result ->
                 when (call.method) {
