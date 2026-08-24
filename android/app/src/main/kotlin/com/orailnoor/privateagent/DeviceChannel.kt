@@ -557,12 +557,25 @@ class DeviceChannel(private val activity: Activity) : MethodChannel.MethodCallHa
      * person present would not be consent.
      */
     private fun requestRecordingConsent() {
-        try {
-            val intent = ScreenRecorder.consentIntent(activity)
-            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            activity.startActivityForResult(intent, RECORD_CONSENT_REQUEST)
-        } catch (_: Throwable) {
-            // Nothing to salvage: the caller already gets RECORD_CONSENT_REQUIRED.
+        // MUST run on the main looper, and MUST NOT carry FLAG_ACTIVITY_NEW_TASK.
+        // startActivityForResult with NEW_TASK is documented not to return a result, and
+        // on this handset it did not present the dialog at all — the first attempt raised
+        // nothing, silently, because the catch below used to swallow the reason whole.
+        main.post {
+            try {
+                activity.startActivityForResult(
+                    ScreenRecorder.consentIntent(activity),
+                    RECORD_CONSENT_REQUEST,
+                )
+            } catch (e: Throwable) {
+                // Say WHY. A silent catch here is why the first failure had to be
+                // diagnosed by elimination instead of read off a log line.
+                android.util.Log.e(
+                    "DeviceChannel",
+                    "could not raise the MediaProjection consent dialog: ${e.message}",
+                    e,
+                )
+            }
         }
     }
 
@@ -800,9 +813,21 @@ class DeviceChannel(private val activity: Activity) : MethodChannel.MethodCallHa
             if (pkg != null) setPackage(pkg)
         }
 
+        // ClipData carries the Uri where the grant machinery actually looks. Setting
+        // EXTRA_STREAM alone is enough for the target to FIND the file and not enough for
+        // it to READ it.
+        send.clipData = ClipData.newRawUri("", uri)
+
         // A chooser, unless a specific app was named. Without one, a device with no
         // default handler shows nothing at all.
         val toStart = if (pkg != null) send else Intent.createChooser(send, "Share")
+
+        // THE GRANT MUST BE ON THE INTENT THAT IS ACTUALLY STARTED. It was on the inner
+        // ACTION_SEND while the chooser was what got launched, so the sheet rendered and
+        // the receiving app was then refused: "Permission Denial: reading ... fileprovider
+        // uri". A share that opens a chooser and cannot be completed is worse than one
+        // that fails outright, because it looks like it worked.
+        toStart.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
         toStart.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         return startOrFalse(toStart)
     }
