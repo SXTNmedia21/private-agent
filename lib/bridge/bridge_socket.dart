@@ -150,6 +150,13 @@ class BridgeSocket {
 
   Future<void> _connect() async {
     if (_disposed || !_enabled || !_ready) return;
+
+    // Never dial on top of a live socket. Without this, any path that reaches _connect()
+    // while a channel exists leaves the old one open, the bridge supersedes it, and the
+    // superseded socket's onDone starts another reconnect — a loop in which the phone
+    // repeatedly kills its own working connection.
+    if (_channel != null) await _teardown();
+
     _setStatus(_attempt == 0 ? BridgeConnectionState.connecting : BridgeConnectionState.reconnecting);
 
     try {
@@ -276,6 +283,17 @@ class BridgeSocket {
 
     if (_disposed || !_enabled || !_ready) {
       _setStatus(BridgeConnectionState.disabled);
+      return;
+    }
+
+    // 4409 means the bridge replaced this socket with a NEWER one for the same device id
+    // — which is our own connection. Redialling here fights it: the new dial supersedes
+    // the socket that replaced us, whose onDone lands back in this method, and the phone
+    // reconnects every ~1.25 s forever, never holding a session long enough to finish an
+    // RPC. The correct response to "you have been superseded" is to stop, because the
+    // connection that superseded us is the live one.
+    if (detail.contains('superseded')) {
+      _setStatus(BridgeConnectionState.connected, detail: 'replaced by a newer connection');
       return;
     }
 
