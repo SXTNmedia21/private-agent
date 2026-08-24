@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  FileProvider roots for device_share_file.
+
+  ACTION_SEND cannot carry a raw filesystem path: a file:// Uri raises
+  FileUriExposedException on Android 7+, and this handset is Android 11. The receiving app
+  needs a content:// Uri it has been granted read permission on, which is what FileProvider
+  mints. Both roots are listed because the bridge's scoped directory is the app's internal
+  files dir, while recordings land under external files — sharing either must work.
+-->
+<paths>
+    <files-path name="internal" path="." />
+    <external-files-path name="external" path="." />
+    <cache-path name="cache" path="." />
+</paths>

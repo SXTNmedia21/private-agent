@@ -306,12 +306,25 @@ class RpcHandlers {
         return HandlerOutcome(await _downloadFromUrl(req, p, elapsed));
 
       case 'device_share_file':
-        // Gated above. The share sheet itself is an intent.
-        return done(await _c.sendIntent(<String, dynamic>{
-          'action': 'android.intent.action.SEND',
-          if (p['package'] != null) 'package': p['package'],
-          'data': (await _resolveScoped((p['path'] ?? '').toString()))?.path ?? '',
-        }));
+        // Gated above. Native builds the share intent properly — see DeviceChannel.
+        // The path is resolved and scope-checked HERE, so a path that escapes the
+        // bridge directory never reaches the platform at all.
+        final target = await _resolveScoped((p['path'] ?? '').toString());
+        if (target == null) {
+          return HandlerOutcome(
+            RpcResponse.failure(req.id, 'path_escapes_scope', elapsed()),
+          );
+        }
+        if (!await target.exists()) {
+          return HandlerOutcome(
+            RpcResponse.failure(req.id, 'no such file: ${p['path']}', elapsed()),
+          );
+        }
+        return done(await _c.shareFile(
+          path: target.path,
+          package: p['package'] as String?,
+          mime: p['mime'] as String?,
+        ));
 
       // ---- recording (P6) ----------------------------------------------
       //

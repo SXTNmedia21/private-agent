@@ -48,6 +48,18 @@
             </intent-filter>
         </activity>
 
+        <!-- Mints content:// Uris for device_share_file. Without this the share intent
+             carries a path no receiving app may read, and nothing resolves it. -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
+
         <!-- Shizuku provider (optional - only works when Shizuku is installed) -->
         <provider
             android:name="rikka.shizuku.ShizukuProvider"

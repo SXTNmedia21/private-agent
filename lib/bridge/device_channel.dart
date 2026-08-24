@@ -206,6 +206,22 @@ class DeviceChannel {
   Future<NativeResult<bool>> requestBatteryUnrestricted() =>
       _invoke<bool>('requestBatteryUnrestricted');
 
+  /// Share a file through the system chooser (build-15).
+  ///
+  /// Native builds the intent — a FileProvider content:// Uri in EXTRA_STREAM with a MIME
+  /// type — because a raw path in `data` is unreadable by any receiving app and resolves
+  /// to nothing. Dart supplies the ABSOLUTE path; scoping is enforced before we get here.
+  Future<NativeResult<Map<String, dynamic>>> shareFile({
+    required String path,
+    String? package,
+    String? mime,
+  }) =>
+      _invoke<Map<String, dynamic>>('shareFile', <String, dynamic>{
+        'path': path,
+        'package': ?package,
+        'mime': ?mime,
+      });
+
   // ---- recording (P6) ------------------------------------------------
 
   /// Begin recording. Fails with `RECORD_CONSENT_REQUIRED` when nobody has tapped the

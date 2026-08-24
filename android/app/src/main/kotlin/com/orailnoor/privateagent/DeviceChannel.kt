@@ -408,6 +408,8 @@ class DeviceChannel(private val activity: Activity) : MethodChannel.MethodCallHa
 
             "sendIntent" -> reply(result) { mapOf("ok" to sendIntent(call)) }
 
+            "shareFile" -> reply(result) { mapOf("ok" to shareFile(call)) }
+
             // ── Notifications ───────────────────────────────────
             "notifications" -> reply(result) { notifications(call) }
 
@@ -730,20 +732,90 @@ class DeviceChannel(private val activity: Activity) : MethodChannel.MethodCallHa
             throw ChannelError("BAD_ARGS", "refusing to close PrivateAgent itself")
         }
         val s = AgentAccessibilityService.instance
-        if (s != null && s.getCurrentPackage() == pkg) {
-            s.globalAction(AccessibilityService.GLOBAL_ACTION_HOME)
+        val wasForeground = s != null && s.getCurrentPackage() == pkg
+        if (wasForeground) {
+            s!!.globalAction(AccessibilityService.GLOBAL_ACTION_HOME)
             try {
                 Thread.sleep(400)
             } catch (_: InterruptedException) {
             }
         }
-        return try {
-            (appContext.getSystemService(Context.ACTIVITY_SERVICE) as? ActivityManager)
-                ?.killBackgroundProcesses(pkg)
-            s == null || s.getCurrentPackage() != pkg
+        // ADR-21 D2: `ok` means the app WAS running and is now closed. The old version
+        // returned `s == null || s.getCurrentPackage() != pkg`, which is true for an app
+        // that was never installed — a cheerful success for a no-op.
+        val installed = try {
+            appContext.packageManager.getPackageInfo(pkg, 0)
+            true
         } catch (_: Throwable) {
             false
         }
+        if (!installed) return false
+
+        return try {
+            (appContext.getSystemService(Context.ACTIVITY_SERVICE) as? ActivityManager)
+                ?.killBackgroundProcesses(pkg)
+            // Only claim it when we can SEE it: it was in the foreground and no longer is.
+            // A background app cannot be confirmed closed from here, and D2 says an
+            // unconfirmable effect is `false`, not an optimistic true.
+            wasForeground && s?.getCurrentPackage() != pkg
+        } catch (_: Throwable) {
+            false
+        }
+    }
+
+    /**
+     * Share a file properly (build-15).
+     *
+     * The old path sent ACTION_SEND with a raw filesystem path in `data`, which could
+     * never work and never did: ACTION_SEND reads EXTRA_STREAM, not `data`; it resolves
+     * on MIME type, and none was set; and a bare path is not a Uri any receiving app may
+     * read — a file:// Uri throws FileUriExposedException on Android 7+. Every share
+     * silently returned false, on every screen state, since it was written.
+     */
+    private fun shareFile(call: MethodCall): Boolean {
+        val path = call.argument<String>("path")
+            ?: throw ChannelError("BAD_ARGS", "path is required")
+        val pkg = call.argument<String>("package")
+        val file = java.io.File(path)
+        if (!file.exists()) {
+            throw ChannelError("NOT_FOUND", "no such file to share: $path")
+        }
+
+        val uri = try {
+            androidx.core.content.FileProvider.getUriForFile(
+                appContext,
+                "${appContext.packageName}.fileprovider",
+                file,
+            )
+        } catch (e: Throwable) {
+            // Almost always means the file sits outside every root in file_paths.xml.
+            throw ChannelError("SHARE_FAILED", "cannot share this path: ${e.message}")
+        }
+
+        val mime = call.argument<String>("mime") ?: mimeOf(file.name)
+        val send = Intent(Intent.ACTION_SEND).apply {
+            type = mime
+            putExtra(Intent.EXTRA_STREAM, uri)
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            if (pkg != null) setPackage(pkg)
+        }
+
+        // A chooser, unless a specific app was named. Without one, a device with no
+        // default handler shows nothing at all.
+        val toStart = if (pkg != null) send else Intent.createChooser(send, "Share")
+        toStart.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        return startOrFalse(toStart)
+    }
+
+    /** Enough of a MIME guess to let a chooser resolve; the caller may override it. */
+    private fun mimeOf(name: String): String = when (name.substringAfterLast('.', "").lowercase()) {
+        "txt", "log", "md" -> "text/plain"
+        "json" -> "application/json"
+        "png" -> "image/png"
+        "jpg", "jpeg" -> "image/jpeg"
+        "mp4" -> "video/mp4"
+        "pdf" -> "application/pdf"
+        else -> "application/octet-stream"
     }
 
     private fun sendIntent(call: MethodCall): Boolean {

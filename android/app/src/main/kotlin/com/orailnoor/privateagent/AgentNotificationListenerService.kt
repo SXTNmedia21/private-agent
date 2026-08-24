@@ -105,18 +105,30 @@ class AgentNotificationListenerService : NotificationListenerService() {
         }
     }
 
-    fun dismiss(key: String): Boolean = try {
-        cancelNotification(key)
-        true
-    } catch (_: Throwable) {
-        false
+    /**
+     * ADR-21 D2: an unknown key means nothing was dismissed, and must report false.
+     * These used to return true unconditionally — `cancelNotification` does not complain
+     * about a key that matches nothing, so dismissing a notification that did not exist
+     * reported success and a mission would plan its next step on it.
+     */
+    fun dismiss(key: String): Boolean {
+        if (byKey(key) == null) return false
+        return try {
+            cancelNotification(key)
+            true
+        } catch (_: Throwable) {
+            false
+        }
     }
 
-    fun snooze(key: String, ms: Long): Boolean = try {
-        snoozeNotification(key, ms)
-        true
-    } catch (_: Throwable) {
-        false
+    fun snooze(key: String, ms: Long): Boolean {
+        if (byKey(key) == null) return false
+        return try {
+            snoozeNotification(key, ms)
+            true
+        } catch (_: Throwable) {
+            false
+        }
     }
 
     /** Fire the first action that carries a RemoteInput — that is the inline reply box. */

@@ -1,7 +1,7 @@
 name: private_agent
 description: "Executor for the agent-bridge control plane"
 publish_to: 'none'
-version: 0.3.1+14
+version: 0.3.2+15
 
 environment:
   sdk: ^3.10.3
@@ -47,6 +47,10 @@ dependencies:
 # Dropping them also drops the permissions they merged into the manifest.
 
 dev_dependencies:
+  # Used by the bridge-socket test's fake WebSocketChannel. Declared explicitly
+  # rather than leaned on transitively — analyze treats that as an issue, and
+  # `flutter analyze` exits non-zero on INFO.
+  stream_channel: ^2.1.2
   flutter_test:
     sdk: flutter
   flutter_lints: ^6.0.0
